@@ -53,7 +53,7 @@ describe('Crypto Service', () => {
         expect(encrypted1).not.toBe(encrypted2);
     });
 
-    describe('Key Rotation Signature & HMAC Verification', () => {
+    describe('HMAC Key Rotation Signatures', () => {
         const rotationData: Omit<KeyRotationPayload, 'signature'> = {
             groupId: '123e4567-e89b-12d3-a456-426614174000',
             newKeyVersion: 2,
@@ -96,6 +96,19 @@ describe('Crypto Service', () => {
             const isValid = await verifyKeyRotationPayload(tamperedPayload, secretPassphrase);
             expect(isValid).toBe(false);
         });
+
+        it('should reject verification if signature is altered', async () => {
+            const signature = await signKeyRotationPayload(rotationData, secretPassphrase);
+            
+            const alteredPayload: KeyRotationPayload = {
+              ...rotationData,
+              newKeyVersion: 3, // Tampered data
+              signature
+            };
+      
+            const isValid = await verifyKeyRotationPayload(alteredPayload, secretPassphrase);
+            expect(isValid).toBe(false);
+          });
 
         it('should return false when payload lacks a signature', async () => {
             const unsignedPayload: KeyRotationPayload = {

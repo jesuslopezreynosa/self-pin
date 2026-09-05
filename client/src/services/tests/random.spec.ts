@@ -4,13 +4,13 @@ import {
     generateHexPassphrase
 } from '../random';
 
-describe('Cryptographic Random Key Generator', () => {
+describe('Random Key Generator Service', () => {
     it('should generate exactly 32 bytes of random data', () => {
         const bytes = generateRandomBytes();
         expect(bytes).toBeInstanceOf(Uint8Array);
         expect(bytes.length).toBe(32);
 
-        console.log(`bytes: ${ bytes }`)
+        console.log(`bytes: ${bytes}`);
     });
 
     it('should generate a 64-character hex string', () => {
@@ -18,7 +18,7 @@ describe('Cryptographic Random Key Generator', () => {
         expect(hex).toHaveLength(64);
         expect(hex).toMatch(/^[0-9a-f]{64}$/);
 
-        console.log(`hex: ${ hex }`)
+        console.log(`hex: ${hex}`);
     });
 
     it('should generate unique values on successive calls', () => {
@@ -26,7 +26,7 @@ describe('Cryptographic Random Key Generator', () => {
         const pass2 = generateHexPassphrase();
         expect(pass1).not.toBe(pass2);
 
-        console.log(`random_value_1: ${ pass1 }`)
-        console.log(`random_value_2: ${ pass2 }`)
+        console.log(`random_value_1: ${pass1}`);
+        console.log(`random_value_2: ${pass2}`);
     });
 });

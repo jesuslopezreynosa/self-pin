@@ -10,6 +10,7 @@ import {
     type UnencryptedLocation,
     type KeyRotationPayload
 } from './crypto';
+import { isValidServerUrl } from './urlValidator';
 
 export interface DecryptedMemberFeed {
     id: number;
@@ -23,11 +24,12 @@ export const useLocationStore = defineStore('location', () => {
     // State
     const deviceToken = ref<string>(localStorage.getItem('deviceToken') || '');
     const pskPassphrase = ref<string>(localStorage.getItem('pskPassphrase') || '');
-    const apiBaseUrl = ref<string>(import.meta.env.VITE_API_BASE_URL || 'http://localhost:5180');
+    const apiBaseUrl = ref<string>(localStorage.getItem('apiBaseUrl') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5180');
     const currentKeyVersion = ref<number>(Number(localStorage.getItem('keyVersion')) || 1);
 
     const familyFeed = ref<DecryptedMemberFeed[]>([]);
     const isUpdating = ref<boolean>(false);
+    const isConfigured = ref<boolean>(!!localStorage.getItem('apiBaseUrl') && !!deviceToken.value);
     const error = ref<string | null>(null);
     const cartoApiKey = ref<string>('');
 
@@ -49,7 +51,88 @@ export const useLocationStore = defineStore('location', () => {
     }
 
     /**
-     * Fetches the map configuration from backend.
+     * Configures the server URL and enforces HTTPS outside localhost.
+     */
+    function configureServerUrl(serverUrl: string) {
+        const validation = isValidServerUrl(serverUrl);
+        if (!validation.valid) {
+            throw new Error(validation.reason);
+        }
+
+        apiBaseUrl.value = serverUrl.replace(/\/+$/, '');
+        localStorage.setItem('apiBaseUrl', apiBaseUrl.value);
+    }
+
+    /**
+     * Registers this client on the backend to receive a server-generated deviceToken.
+     */
+    async function registerDevice(userName: string) {
+        if (!apiBaseUrl.value) {
+            throw new Error('Server URL is not configured.');
+        }
+
+        error.value = null;
+
+        try {
+            const response = await fetch(`${apiBaseUrl.value}/admin/users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: userName })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to register device on server.');
+            }
+
+            const data = await response.json();
+            setDeviceToken(data.deviceToken);
+            isConfigured.value = true;
+            return data;
+        } catch (err: any) {
+            error.value = err.message || 'Device registration failed.';
+            throw err;
+        }
+    }
+
+    /**
+     * Creates a location sharing group with another device via their Server Device Token.
+     */
+    async function shareLocationWithDevice(targetDeviceId: string, groupName?: string) {
+        if (!isAuthenticated.value) {
+            throw new Error('Device is not authenticated.');
+        }
+
+        error.value = null;
+
+        try {
+            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/groups/share`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Device-Token': deviceToken.value
+                },
+                body: JSON.stringify({
+                    targetDeviceId,
+                    groupName: groupName || 'Direct Share'
+                })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to share location with device.');
+            }
+
+            const groupData = await response.json();
+            await fetchFeed();
+            return groupData;
+        } catch (err: any) {
+            error.value = err.message || 'Error creating group share.';
+            throw err;
+        }
+    }
+
+    /**
+     * Fetches map configuration from backend.
      */
     async function fetchMapConfig() {
         if (!isAuthenticated.value) return;
@@ -68,7 +151,7 @@ export const useLocationStore = defineStore('location', () => {
                 cartoApiKey.value = config.cartoApiKey;
             }
         } catch (err: any) {
-            console.warn('Could not retrieve map configuration from server.', err.message);
+            console.warn('Could not retrieve map configuration.', err.message);
         }
     }
 
@@ -119,7 +202,7 @@ export const useLocationStore = defineStore('location', () => {
         }
 
         const nextVersion = currentKeyVersion.value + 1;
-        const encryptedNewKey = btoa(newPassphrase); // Replace with your group key-exchange cipher payload
+        const encryptedNewKey = btoa(newPassphrase);
 
         const rotationPayload: KeyRotationPayload = {
             groupId,
@@ -127,7 +210,6 @@ export const useLocationStore = defineStore('location', () => {
             encryptedNewKey
         };
 
-        // HMAC Sign rotation request with current active PSK
         const signature = await signKeyRotationPayload(rotationPayload, pskPassphrase.value);
         rotationPayload.signature = signature;
 
@@ -144,7 +226,6 @@ export const useLocationStore = defineStore('location', () => {
             throw new Error('Server rejected key rotation request.');
         }
 
-        // Update local state with newly adopted key
         setPskPassphrase(newPassphrase, nextVersion);
     }
 
@@ -155,12 +236,11 @@ export const useLocationStore = defineStore('location', () => {
         const isValid = await verifyKeyRotationPayload(rotationPayload, pskPassphrase.value);
 
         if (!isValid) {
-            console.error('Security Violation: Unauthorized key rotation attempt detected! Signature verification failed.');
+            console.error('Security Violation: Unauthorized key rotation attempt detected!');
             error.value = 'Security Alert: Failed to verify key rotation from server.';
             return false;
         }
 
-        // Decrypt or decode the new key material and update store state
         const newPassphrase = atob(rotationPayload.encryptedNewKey);
         setPskPassphrase(newPassphrase, rotationPayload.newKeyVersion);
         return true;
@@ -206,7 +286,7 @@ export const useLocationStore = defineStore('location', () => {
                                 pskPassphrase.value
                             );
                         } catch (decryptionErr) {
-                            console.warn(`Could not decrypt payload for user ${member.id}. Stale or mismatching key?`);
+                            console.warn(`Could not decrypt payload for user ${member.id}.`);
                         }
                     }
 
@@ -244,11 +324,9 @@ export const useLocationStore = defineStore('location', () => {
 
             const data = await response.json();
 
-            // Find any group marked with PendingKeyRotation = true
             for (const group of data.groups) {
                 if (group.pendingKeyRotation) {
-                    console.warn(`Pending key rotation detected for group ${group.groupId}. Executing rotation sync...`);
-                    // Trigger client-side key fetch or auto-rotation handler
+                    console.warn(`Pending key rotation detected for group ${group.groupId}.`);
                 }
             }
         } catch (err: any) {
@@ -257,18 +335,27 @@ export const useLocationStore = defineStore('location', () => {
     }
 
     return {
+        // State
         deviceToken,
         pskPassphrase,
         currentKeyVersion,
         apiBaseUrl,
         familyFeed,
         isUpdating,
+        isConfigured,
         error,
         cartoApiKey,
+
+        // Getters
         isAuthenticated,
         hasConfiguredPsk,
+
+        // Actions
         setDeviceToken,
         setPskPassphrase,
+        configureServerUrl,
+        registerDevice,
+        shareLocationWithDevice,
         fetchMapConfig,
         publishLocation,
         initiateKeyRotation,

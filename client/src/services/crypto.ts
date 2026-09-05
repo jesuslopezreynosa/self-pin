@@ -1,3 +1,4 @@
+// src/services/crypto.ts
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -32,8 +33,8 @@ async function getCryptoKey(passphrase: string): Promise<CryptoKey> {
 }
 
 /**
-* Imports a passphrase as an HMAC-SHA256 key for payload signing and verification.
-*/
+ * Imports a passphrase as an HMAC-SHA256 key for payload signing and verification.
+ */
 async function getHmacKey(passphrase: string): Promise<CryptoKey> {
     const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);
     const keyData = encoder.encode(paddedKey);
@@ -93,10 +94,7 @@ export async function decryptLocationPayload(encryptedPayload: string, passphras
 /**
  * Generates an HMAC-SHA256 signature for a key rotation payload using the active PSK.
  */
-export async function signKeyRotationPayload(
-    payload: Omit<KeyRotationPayload, 'signature'>,
-    currentPassphrase: string
-): Promise<string> {
+export async function signKeyRotationPayload(payload: Omit<KeyRotationPayload, 'signature'>, currentPassphrase: string): Promise<string> {
     const hmacKey = await getHmacKey(currentPassphrase);
     const dataToSign = encoder.encode(
         `${payload.groupId}:${payload.newKeyVersion}:${payload.encryptedNewKey}`
