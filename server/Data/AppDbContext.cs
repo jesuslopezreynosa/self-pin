@@ -9,4 +9,12 @@ public class AppDbContext : DbContext
     public DbSet<LocationEntry> Locations => Set<LocationEntry>();
     public DbSet<Group> Groups => Set<Group>();
     public DbSet<GroupMember> GroupMembers => Set<GroupMember>();
+    public DbSet<GroupKey> GroupKeys => Set<GroupKey>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.DeviceToken)
+            .IsUnique();
+    }
 }

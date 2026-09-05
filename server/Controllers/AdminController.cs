@@ -72,8 +72,7 @@ public class AdminController : ControllerBase
                     .Join(_db.Users, gm => gm.UserId, u => u.Id, (gm, u) => new
                     {
                         u.Id,
-                        u.Name,
-                        gm.PendingKeyRotation
+                        u.Name
                     })
                     .ToList()
             })
@@ -103,8 +102,7 @@ public class AdminController : ControllerBase
             {
                 Id = Guid.NewGuid(),
                 GroupId = req.GroupId,
-                UserId = req.UserId,
-                PendingKeyRotation = true
+                UserId = req.UserId
             });
 
             // Trigger key rotation flag across all active group members
@@ -153,12 +151,11 @@ public class AdminController : ControllerBase
         {
             if (evictedUserId.HasValue && member.UserId == evictedUserId.Value)
                 continue;
-
-            member.PendingKeyRotation = true;
         }
     }
 }
 
 // Request Contracts
 public record CreateUserRequest(string Name);
+public record CreateGroupRequest(string Name);
 public record AssignUserGroupRequest(Guid GroupId, int UserId);
