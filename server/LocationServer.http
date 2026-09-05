@@ -1,0 +1,32 @@
+@LocationServer_HostAddress = http://localhost:5180
+
+### Create a New User (Admin Endpoint)
+# Save the returned deviceToken from the response to use in updates below
+POST {{LocationServer_HostAddress}}/admin/users
+Content-Type: application/json
+
+{
+  "name": "Dad"
+}
+
+###
+
+### Send Location Update (Public API Endpoint)
+# Replace YOUR_DEVICE_TOKEN_HERE with the deviceToken returned from the user creation request
+POST {{LocationServer_HostAddress}}/api/v1/location/update
+Content-Type: application/json
+X-Device-Token: YOUR_DEVICE_TOKEN_HERE
+
+{
+  "latitude": 37.7749,
+  "longitude": -122.4194,
+  "accuracy": 5.0
+}
+
+###
+
+### Fetch Live Family Map Feed
+GET {{LocationServer_HostAddress}}/api/v1/location/feed
+Accept: application/json
+
+###
