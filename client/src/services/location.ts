@@ -4,7 +4,7 @@ import { ref, computed } from 'vue';
 
 import {
     encryptLocationPayload,
-    decryptLocationPayload,
+    // decryptLocationPayload,
     type UnencryptedLocation
 } from './crypto';
 
@@ -90,125 +90,51 @@ export async function sendEncryptedLocation(
 }
 
 export const useLocationStore = defineStore('location', () => {
-    // State
     const deviceToken = ref<string>(localStorage.getItem('deviceToken') || '');
     const pskPassphrase = ref<string>(localStorage.getItem('pskPassphrase') || '');
-    const apiBaseUrl = ref<string>(import.meta.env.VITE_API_BASE_URL || 'http://localhost:5180');
+    const apiBaseUrl = ref<string>(localStorage.getItem('apiBaseUrl') || 'http://localhost:5180');
+    const familyFeed = ref<any[]>([]);
+    const cartoApiKey = ref<string>('');
 
-    const familyFeed = ref<DecryptedMemberFeed[]>([]);
-    const isUpdating = ref<boolean>(false);
-    const error = ref<string | null>(null);
-
-    // Getters
-    const isAuthenticated = computed(() => deviceToken.value.length > 0);
-    const hasConfiguredPsk = computed(() => pskPassphrase.value.length > 0);
-
-    // Actions
-    function setDeviceToken(token: string) {
-        deviceToken.value = token;
-        localStorage.setItem('deviceToken', token);
-    }
-
-    function setPskPassphrase(passphrase: string) {
-        pskPassphrase.value = passphrase;
-        localStorage.setItem('pskPassphrase', passphrase);
-    }
+    const isAuthenticated = computed(() => !!deviceToken.value.trim());
+    const hasConfiguredPsk = computed(() => !!pskPassphrase.value.trim());
 
     /**
-     * Encrypts raw GPS coordinates and pushes them to the server relay.
+     * Fetches the protected map configuration and CARTO API key from the backend.
      */
-    async function publishLocation(coords: { latitude: number; longitude: number; accuracy?: number; }) {
-        if (!isAuthenticated.value || !hasConfiguredPsk.value) {
-            error.value = 'Device token or PSK passphrase missing.';
-            return;
-        }
-
-        isUpdating.value = true;
-        error.value = null;
+    async function fetchMapConfig() {
+        if (!isAuthenticated.value) return;
 
         try {
-            const encryptedPayload = await encryptLocationPayload(coords, pskPassphrase.value);
-
-            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/update`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Device-Token': deviceToken.value
-                },
-                body: JSON.stringify({
-                    encryptedPayload,
-                    keyVersion: 1
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to update location: ${response.statusText}`);
-            }
-        } catch (err: any) {
-            error.value = err.message || 'Error publishing location.';
-        } finally {
-            isUpdating.value = false;
-        }
-    }
-
-    /**
-     * Fetches the shared location feed from the server and decrypts each payload locally.
-     */
-    async function fetchFeed() {
-        if (!isAuthenticated.value || !hasConfiguredPsk.value) {
-            error.value = 'Device token or PSK passphrase missing.';
-            return;
-        }
-
-        error.value = null;
-
-        try {
-            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/feed`, {
+            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/map-config`, {
+                method: 'GET',
                 headers: {
                     'Accept': 'application/json',
                     'X-Device-Token': deviceToken.value
                 }
             });
 
-            if (response.status === 401) {
-                throw new Error('Unauthorized device token.');
+            if (response.ok) {
+                const config = await response.json();
+                cartoApiKey.value = config.cartoApiKey || '';
+            } else {
+                console.warn(`Map config server returned ${response.status}. Falling back to default tiles.`);
+                cartoApiKey.value = ''; // Reset key on failure
             }
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch group feed.');
-            }
-
-            const rawFeed = await response.json();
-
-            // Decrypt each group member's latest entry using the local PSK
-            const decryptedEntries = await Promise.all(
-                rawFeed.map(async (member: any) => {
-                    let location: UnencryptedLocation | null = null;
-
-                    if (member.latestEntry?.encryptedPayload) {
-                        try {
-                            location = await decryptLocationPayload(
-                                member.latestEntry.encryptedPayload,
-                                pskPassphrase.value
-                            );
-                        } catch (decryptionErr) {
-                            console.warn(`Could not decrypt payload for user ${member.id}. Invalid key?`);
-                        }
-                    }
-
-                    return {
-                        id: member.id,
-                        name: member.name,
-                        lastUpdated: member.lastUpdated,
-                        location
-                    } as DecryptedMemberFeed;
-                })
-            );
-
-            familyFeed.value = decryptedEntries;
         } catch (err: any) {
-            error.value = err.message || 'Error fetching location feed.';
+            console.warn('Network error fetching map config. Falling back to default tiles.', err.message);
+            cartoApiKey.value = '';
         }
+    }
+
+    function setDeviceToken(token: string) {
+        deviceToken.value = token;
+        localStorage.setItem('deviceToken', token);
+    }
+
+    function setPskPassphrase(psk: string) {
+        pskPassphrase.value = psk;
+        localStorage.setItem('pskPassphrase', psk);
     }
 
     return {
@@ -216,13 +142,11 @@ export const useLocationStore = defineStore('location', () => {
         pskPassphrase,
         apiBaseUrl,
         familyFeed,
-        isUpdating,
-        error,
+        cartoApiKey,
         isAuthenticated,
         hasConfiguredPsk,
+        fetchMapConfig,
         setDeviceToken,
-        setPskPassphrase,
-        publishLocation,
-        fetchFeed
+        setPskPassphrase
     };
 });
