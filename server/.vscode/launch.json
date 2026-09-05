@@ -2,16 +2,12 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch .NET Server (Node Wrapper)",
-            "type": "node",
+            "name": ".NET Core Launch (server)",
+            "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/server/bin/Debug/net10.0/LocationServer.dll",
-            "cwd": "${workspaceFolder}/server",
-            "serverReadyAction": {
-                "action": "openExternally",
-                "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
-            },
+            "program": "${workspaceFolder}/bin/Debug/net10.0/LocationServer.dll",
+            "cwd": "${workspaceFolder}",
             "env": {
                 "ASPNETCORE_ENVIRONMENT": "Development",
                 "ASPNETCORE_URLS": "http://localhost:5180"
