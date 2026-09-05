@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
     encryptLocationPayload,
     decryptLocationPayload,
-    type UnencryptedLocation
+    type UnencryptedLocation,
+    signKeyRotationPayload,
+    verifyKeyRotationPayload,
+    type KeyRotationPayload
 } from '../crypto';
 
 describe('Crypto Service', () => {
@@ -17,7 +20,7 @@ describe('Crypto Service', () => {
         // 1. Encrypt
         const encryptedBase64 = await encryptLocationPayload(testLocation, secretPassphrase);
         expect(encryptedBase64).toBeTypeOf('string');
-        expect(encryptedBase64).not.toContain(`${ testLocation.latitude }`); // Raw values are hidden
+        expect(encryptedBase64).not.toContain(`${testLocation.latitude}`); // Raw values are hidden
 
         console.log(encryptedBase64);
 
@@ -46,8 +49,61 @@ describe('Crypto Service', () => {
         console.log(encrypted1);
         console.log(encrypted2);
 
-
         // Each run uses a fresh 12-byte IV, so ciphertexts must differ
         expect(encrypted1).not.toBe(encrypted2);
+    });
+
+    describe('Key Rotation Signature & HMAC Verification', () => {
+        const rotationData: Omit<KeyRotationPayload, 'signature'> = {
+            groupId: '123e4567-e89b-12d3-a456-426614174000',
+            newKeyVersion: 2,
+            encryptedNewKey: 'encrypted-key-material-blob'
+        };
+
+        it('should successfully sign and verify a valid key rotation payload', async () => {
+            const signature = await signKeyRotationPayload(rotationData, secretPassphrase);
+            expect(signature).toBeTypeOf('string');
+
+            const fullPayload: KeyRotationPayload = {
+                ...rotationData,
+                signature
+            };
+
+            const isValid = await verifyKeyRotationPayload(fullPayload, secretPassphrase);
+            expect(isValid).toBe(true);
+        });
+
+        it('should fail verification if the signature was generated with a different passphrase', async () => {
+            const signature = await signKeyRotationPayload(rotationData, 'attacker-secret-key!');
+            const fullPayload: KeyRotationPayload = {
+                ...rotationData,
+                signature
+            };
+
+            const isValid = await verifyKeyRotationPayload(fullPayload, secretPassphrase);
+            expect(isValid).toBe(false);
+        });
+
+        it('should fail verification if the payload contents were tampered with', async () => {
+            const signature = await signKeyRotationPayload(rotationData, secretPassphrase);
+
+            const tamperedPayload: KeyRotationPayload = {
+                ...rotationData,
+                encryptedNewKey: 'malicious-injected-key-material',
+                signature
+            };
+
+            const isValid = await verifyKeyRotationPayload(tamperedPayload, secretPassphrase);
+            expect(isValid).toBe(false);
+        });
+
+        it('should return false when payload lacks a signature', async () => {
+            const unsignedPayload: KeyRotationPayload = {
+                ...rotationData
+            };
+
+            const isValid = await verifyKeyRotationPayload(unsignedPayload, secretPassphrase);
+            expect(isValid).toBe(false);
+        });
     });
 });

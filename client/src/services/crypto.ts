@@ -1,12 +1,25 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+export interface UnencryptedLocation {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    timestamp?: string;
+}
+
+export interface KeyRotationPayload {
+    groupId: string;
+    newKeyVersion: number;
+    encryptedNewKey: string;
+    signature?: string;
+}
+
 /**
- * Derives a 256-bit AES-GCM Key from a plain-text pre-shared passphrase.
+ * Derives a 256-bit AES-GCM Key from a plain-text pre-shared passphrase/key.
  */
 async function getCryptoKey(passphrase: string): Promise<CryptoKey> {
-    // Pad or trim passphrase to strictly 32 bytes (256 bits)
-    const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);  // Note: Need to see potential issue with this? Might be better to migrate to a repeating passphrase until it fills out the 32 bytes
+    const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);
     const keyData = encoder.encode(paddedKey);
 
     return await crypto.subtle.importKey(
@@ -18,11 +31,20 @@ async function getCryptoKey(passphrase: string): Promise<CryptoKey> {
     );
 }
 
-export interface UnencryptedLocation {
-    latitude: number;
-    longitude: number;
-    accuracy?: number;
-    timestamp?: string;
+/**
+* Imports a passphrase as an HMAC-SHA256 key for payload signing and verification.
+*/
+async function getHmacKey(passphrase: string): Promise<CryptoKey> {
+    const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);
+    const keyData = encoder.encode(paddedKey);
+
+    return await crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign', 'verify']
+    );
 }
 
 /**
@@ -31,7 +53,6 @@ export interface UnencryptedLocation {
 export async function encryptLocationPayload(location: UnencryptedLocation, passphrase: string): Promise<string> {
     const key = await getCryptoKey(passphrase);
 
-    // Generate a random 12-byte Initialization Vector (IV/Nonce) for AES-GCM
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = encoder.encode(JSON.stringify(location));
 
@@ -41,7 +62,6 @@ export async function encryptLocationPayload(location: UnencryptedLocation, pass
         data
     );
 
-    // Package IV and Ciphertext as Base64 strings inside a JSON object
     const payload = {
         iv: btoa(String.fromCharCode(...iv)),
         data: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
@@ -56,7 +76,6 @@ export async function encryptLocationPayload(location: UnencryptedLocation, pass
 export async function decryptLocationPayload(encryptedPayload: string, passphrase: string): Promise<UnencryptedLocation> {
     const key = await getCryptoKey(passphrase);
 
-    // Parse Base64 container
     const { iv, data } = JSON.parse(atob(encryptedPayload));
 
     const ivBuffer = Uint8Array.from(atob(iv), (c) => c.charCodeAt(0));
@@ -69,4 +88,44 @@ export async function decryptLocationPayload(encryptedPayload: string, passphras
     );
 
     return JSON.parse(decoder.decode(decryptedBuffer)) as UnencryptedLocation;
+}
+
+/**
+ * Generates an HMAC-SHA256 signature for a key rotation payload using the active PSK.
+ */
+export async function signKeyRotationPayload(
+    payload: Omit<KeyRotationPayload, 'signature'>,
+    currentPassphrase: string
+): Promise<string> {
+    const hmacKey = await getHmacKey(currentPassphrase);
+    const dataToSign = encoder.encode(
+        `${payload.groupId}:${payload.newKeyVersion}:${payload.encryptedNewKey}`
+    );
+
+    const signatureBuffer = await crypto.subtle.sign('HMAC', hmacKey, dataToSign);
+    return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+}
+
+/**
+ * Verifies the HMAC signature of a key rotation payload against the active PSK.
+ */
+export async function verifyKeyRotationPayload(payload: KeyRotationPayload, currentPassphrase: string): Promise<boolean> {
+    if (!payload.signature) return false;
+
+    const hmacKey = await getHmacKey(currentPassphrase);
+    const dataToVerify = encoder.encode(
+        `${payload.groupId}:${payload.newKeyVersion}:${payload.encryptedNewKey}`
+    );
+
+    const signatureBuffer = Uint8Array.from(
+        atob(payload.signature),
+        (c) => c.charCodeAt(0)
+    );
+
+    return await crypto.subtle.verify(
+        'HMAC',
+        hmacKey,
+        signatureBuffer,
+        dataToVerify
+    );
 }
