@@ -8,4 +8,5 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<LocationEntry> Locations => Set<LocationEntry>();
     public DbSet<Group> Groups => Set<Group>();
+    public DbSet<GroupMember> GroupMembers => Set<GroupMember>();
 }

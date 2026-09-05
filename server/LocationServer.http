@@ -30,3 +30,25 @@ GET {{LocationServer_HostAddress}}/api/v1/location/feed
 Accept: application/json
 
 ###
+
+### Create a Group
+POST http://localhost:5180/admin/groups
+Content-Type: application/json
+
+{
+  "name": "Family"
+}
+
+### Get All Groups (and members)
+GET http://localhost:5180/admin/groups
+Accept: application/json
+
+### Assign User to Group
+# Replace groupId and userId with values from your database
+POST http://localhost:5180/admin/groups/assign
+Content-Type: application/json
+
+{
+  "groupId": "YOUR_GROUP_GUID_HERE",
+  "userId": 1
+}
