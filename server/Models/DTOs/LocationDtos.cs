@@ -1,8 +1,8 @@
 namespace LocationServer.Models.DTOs;
 
 public record EncryptedLocationUpdateRequest(
-    string EncryptedPayload, 
-    int KeyVersion, 
+    string EncryptedPayload,
+    int KeyVersion,
     DateTime? Timestamp
 );
 

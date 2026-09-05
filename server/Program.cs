@@ -31,7 +31,7 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    
+
     // Wipe and recreate the database ONLY during local development
     if (app.Environment.IsDevelopment())
     {

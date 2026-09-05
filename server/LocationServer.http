@@ -32,7 +32,7 @@ Accept: application/json
 ###
 
 ### Create a Group
-POST http://localhost:5180/admin/groups
+POST {{LocationServer_HostAddress}}/admin/groups
 Content-Type: application/json
 
 {
@@ -40,12 +40,12 @@ Content-Type: application/json
 }
 
 ### Get All Groups (and members)
-GET http://localhost:5180/admin/groups
+GET {{LocationServer_HostAddress}}/admin/groups
 Accept: application/json
 
 ### Assign User to Group
 # Replace groupId and userId with values from your database
-POST http://localhost:5180/admin/groups/assign
+POST {{LocationServer_HostAddress}}/admin/groups/assign
 Content-Type: application/json
 
 {

@@ -18,7 +18,7 @@ public class LocationController : ControllerBase
 
     [HttpPost("update")]
     public async Task<IActionResult> UpdateLocation(
-        [FromBody] EncryptedLocationUpdateRequest req, 
+        [FromBody] EncryptedLocationUpdateRequest req,
         [FromHeader(Name = "X-Device-Token")] string? deviceToken)
     {
         if (string.IsNullOrEmpty(deviceToken))
