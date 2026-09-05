@@ -90,4 +90,32 @@ public class LocationController : ControllerBase
 
         return Ok(sharedFeed);
     }
+
+    [HttpGet("map-config")]
+    public async Task<IActionResult> GetMapConfig([FromHeader(Name = "X-Device-Token")] string deviceToken, [FromServices] IConfiguration configuration)
+    {
+        if (string.IsNullOrWhiteSpace(deviceToken))
+        {
+            return Unauthorized(new { message = "Device token is required." });
+        }
+
+        // Authenticate: Ensure the device token belongs to a registered user
+        var userExists = await _db.Users
+            .AsNoTracking()
+            .AnyAsync(u => u.DeviceToken == deviceToken);
+
+        if (!userExists)
+        {
+            return Unauthorized(new { message = "Unauthorized: Device token is not registered." });
+        }
+
+        // Retrieve CARTO API key from appsettings.json
+        var cartoApiKey = configuration["CartoDb:ApiKey"] ?? string.Empty;
+
+        return Ok(new
+        {
+            cartoApiKey,
+            tileUrlTemplate = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+        });
+    }
 }
