@@ -18,7 +18,7 @@ export async function setupBackgroundTracking(deviceToken: string, apiBaseUrl: s
         const watcherId = await BackgroundGeolocation.addWatcher(
             {
                 backgroundTitle: "Live Location Active",
-                backgroundMessage: "Sharing location updates with your family server.",
+                backgroundMessage: "Sharing location updates with your group(s).",
                 requestPermissions: true,
                 stale: false,
                 distanceFilter: 15 // Trigger update after moving 15 meters

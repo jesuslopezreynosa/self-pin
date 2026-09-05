@@ -6,7 +6,7 @@ const decoder = new TextDecoder();
  */
 async function getCryptoKey(passphrase: string): Promise<CryptoKey> {
     // Pad or trim passphrase to strictly 32 bytes (256 bits)
-    const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);
+    const paddedKey = passphrase.padEnd(32, '0').slice(0, 32);  // Note: Need to see potential issue with this? Might be better to migrate to a repeating passphrase until it fills out the 32 bytes
     const keyData = encoder.encode(paddedKey);
 
     return await crypto.subtle.importKey(
@@ -28,10 +28,7 @@ export interface UnencryptedLocation {
 /**
  * Encrypts location JSON into a Base64-encoded payload containing IV + Ciphertext.
  */
-export async function encryptLocationPayload(
-    location: UnencryptedLocation,
-    passphrase: string
-): Promise<string> {
+export async function encryptLocationPayload(location: UnencryptedLocation, passphrase: string): Promise<string> {
     const key = await getCryptoKey(passphrase);
 
     // Generate a random 12-byte Initialization Vector (IV/Nonce) for AES-GCM
@@ -56,10 +53,7 @@ export async function encryptLocationPayload(
 /**
  * Decrypts a Base64 payload back into raw location coordinates.
  */
-export async function decryptLocationPayload(
-    encryptedPayload: string,
-    passphrase: string
-): Promise<UnencryptedLocation> {
+export async function decryptLocationPayload(encryptedPayload: string, passphrase: string): Promise<UnencryptedLocation> {
     const key = await getCryptoKey(passphrase);
 
     // Parse Base64 container
