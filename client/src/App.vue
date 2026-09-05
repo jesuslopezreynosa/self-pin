@@ -31,10 +31,13 @@ function enableDemoMode() {
 
 onMounted(async () => {
     if (locationStore.isAuthenticated && locationStore.hasConfiguredPsk) {
+        await locationStore.checkUserStatus();
         await locationStore.fetchFeed();
 
-        pollInterval = window.setInterval(() => {
-            locationStore.fetchFeed();
+        // Poll feed and status check periodically
+        pollInterval = window.setInterval(async () => {
+            await locationStore.checkUserStatus();
+            await locationStore.fetchFeed();
         }, 10000);
     }
 });

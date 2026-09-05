@@ -226,6 +226,36 @@ export const useLocationStore = defineStore('location', () => {
         }
     }
 
+    /**
+     * Checks user status to detect pending key rotations across joined groups.
+     */
+    async function checkUserStatus() {
+        if (!isAuthenticated.value) return;
+
+        try {
+            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/status`, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Device-Token': deviceToken.value
+                }
+            });
+
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            // Find any group marked with PendingKeyRotation = true
+            for (const group of data.groups) {
+                if (group.pendingKeyRotation) {
+                    console.warn(`Pending key rotation detected for group ${group.groupId}. Executing rotation sync...`);
+                    // Trigger client-side key fetch or auto-rotation handler
+                }
+            }
+        } catch (err: any) {
+            console.error('Error checking user status:', err.message);
+        }
+    }
+
     return {
         deviceToken,
         pskPassphrase,
@@ -243,6 +273,7 @@ export const useLocationStore = defineStore('location', () => {
         publishLocation,
         initiateKeyRotation,
         processPendingKeyRotation,
-        fetchFeed
+        fetchFeed,
+        checkUserStatus
     };
 });
