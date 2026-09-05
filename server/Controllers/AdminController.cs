@@ -1,5 +1,5 @@
-using LocationServer.Models;
 using LocationServer.Models.DTOs;
+using LocationServer.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -40,7 +40,7 @@ public class AdminController : ControllerBase
         return Ok(users);
     }
 
-    // --- Group Management ---
+    // --- Group Management & Automated Key Rotation Triggers ---
 
     [HttpPost("groups")]
     public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest req)
@@ -55,7 +55,6 @@ public class AdminController : ControllerBase
         _db.Groups.Add(group);
         await _db.SaveChangesAsync();
 
-        // Returns HTTP 201 Created with the full Group object (including Id) in the body
         return Created($"/admin/groups/{group.Id}", group);
     }
 
@@ -73,7 +72,8 @@ public class AdminController : ControllerBase
                     .Join(_db.Users, gm => gm.UserId, u => u.Id, (gm, u) => new
                     {
                         u.Id,
-                        u.Name
+                        u.Name,
+                        gm.PendingKeyRotation
                     })
                     .ToList()
             })
@@ -85,45 +85,80 @@ public class AdminController : ControllerBase
     [HttpPost("groups/assign")]
     public async Task<IActionResult> AssignUserToGroup([FromBody] AssignUserGroupRequest req)
     {
-        var groupExists = await _db.Groups.AnyAsync(g => g.Id == req.GroupId);
+        var group = await _db.Groups
+            .Include(g => g.Members)
+            .FirstOrDefaultAsync(g => g.Id == req.GroupId);
+
         var userExists = await _db.Users.AnyAsync(u => u.Id == req.UserId);
 
-        if (!groupExists || !userExists)
+        if (group == null || !userExists)
             return NotFound(new { error = "Group or User not found." });
 
-        var existingMembership = await _db.GroupMembers
-            .FirstOrDefaultAsync(gm => gm.GroupId == req.GroupId && gm.UserId == req.UserId);
+        var existingMembership = group.Members.FirstOrDefault(gm => gm.UserId == req.UserId);
 
         if (existingMembership == null)
         {
+            // Add new member
             _db.GroupMembers.Add(new GroupMember
             {
                 Id = Guid.NewGuid(),
                 GroupId = req.GroupId,
-                UserId = req.UserId
+                UserId = req.UserId,
+                PendingKeyRotation = true
             });
+
+            // Trigger key rotation flag across all active group members
+            TriggerGroupKeyRotation(group);
+
             await _db.SaveChangesAsync();
         }
 
-        return Ok(new { success = true });
+        return Ok(new { success = true, currentKeyVersion = group.CurrentKeyVersion });
     }
 
     [HttpPost("groups/remove")]
     public async Task<IActionResult> RemoveUserFromGroup([FromBody] AssignUserGroupRequest req)
     {
-        var membership = await _db.GroupMembers
-            .FirstOrDefaultAsync(gm => gm.GroupId == req.GroupId && gm.UserId == req.UserId);
+        var group = await _db.Groups
+            .Include(g => g.Members)
+            .FirstOrDefaultAsync(g => g.Id == req.GroupId);
+
+        if (group == null)
+            return NotFound(new { error = "Group not found." });
+
+        var membership = group.Members.FirstOrDefault(gm => gm.UserId == req.UserId);
 
         if (membership != null)
         {
+            // Remove user from group
             _db.GroupMembers.Remove(membership);
+
+            // Trigger key rotation flag for all remaining members so evicted user loses access
+            TriggerGroupKeyRotation(group, evictedUserId: req.UserId);
+
             await _db.SaveChangesAsync();
         }
 
-        return Ok(new { success = true });
+        return Ok(new { success = true, currentKeyVersion = group.CurrentKeyVersion });
+    }
+
+    /// <summary>
+    /// Helper to increment key version and mark members for background rotation.
+    /// </summary>
+    private static void TriggerGroupKeyRotation(Group group, int? evictedUserId = null)
+    {
+        group.CurrentKeyVersion += 1;
+
+        foreach (var member in group.Members)
+        {
+            if (evictedUserId.HasValue && member.UserId == evictedUserId.Value)
+                continue;
+
+            member.PendingKeyRotation = true;
+        }
     }
 }
 
 // Request Contracts
-public record CreateGroupRequest(string Name);
+public record CreateUserRequest(string Name);
 public record AssignUserGroupRequest(Guid GroupId, int UserId);

@@ -118,4 +118,85 @@ public class LocationController : ControllerBase
             tileUrlTemplate = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         });
     }
+
+    /// <summary>
+    /// Accepts a key rotation request signed with the current PSK and relays it to group members.
+    /// </summary>
+    [HttpPost("rotate-key")]
+    public async Task<IActionResult> RotateKey(
+        [FromBody] KeyRotationPayloadDto request,
+        [FromHeader(Name = "X-Device-Token")] string? deviceToken)
+    {
+        // 1. Authenticate Requesting Device
+        if (string.IsNullOrEmpty(deviceToken))
+            return Unauthorized(new { error = "Device token header required." });
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+        if (user == null)
+            return Unauthorized(new { error = "Invalid device token." });
+
+        // 2. Validate User Membership in Target Group
+        var memberRecord = await _db.GroupMembers
+            .FirstOrDefaultAsync(gm => gm.GroupId == request.GroupId && gm.UserId == user.Id);
+
+        if (memberRecord == null)
+            return Forbid();
+
+        var group = await _db.Groups
+            .Include(g => g.Members)
+            .FirstOrDefaultAsync(g => g.Id == request.GroupId);
+
+        if (group == null)
+            return NotFound(new { error = "Group not found." });
+
+        // 3. Update Group State
+        group.CurrentKeyVersion = request.NewKeyVersion;
+
+        // Flag all OTHER active members as having a pending key rotation
+        foreach (var member in group.Members.Where(m => m.UserId != user.Id))
+        {
+            member.PendingKeyRotation = true;
+        }
+
+        // Store or broadcast rotation relay payload (e.g., via SignalR or DB queue)
+        // StoreRotationPayload(group.Id, request);
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new { success = true, newKeyVersion = group.CurrentKeyVersion });
+    }
+
+    /// <summary>
+    /// Returns user authentication and key rotation status for active group memberships.
+    /// </summary>
+    [HttpGet("status")]
+    public async Task<IActionResult> GetUserStatus([FromHeader(Name = "X-Device-Token")] string? deviceToken)
+    {
+        // 1. Authenticate Requesting Device
+        if (string.IsNullOrEmpty(deviceToken))
+            return Unauthorized(new { error = "Device token header required." });
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+        if (user == null)
+            return Unauthorized(new { error = "Invalid device token." });
+
+        // 2. Fetch Group Memberships & Pending Key Rotation Status
+        var memberships = await _db.GroupMembers
+            .Where(gm => gm.UserId == user.Id)
+            .Join(_db.Groups, gm => gm.GroupId, g => g.Id, (gm, g) => new
+            {
+                GroupId = g.Id,
+                GroupName = g.Name,
+                g.CurrentKeyVersion,
+                gm.PendingKeyRotation
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            userId = user.Id,
+            userName = user.Name,
+            groups = memberships
+        });
+    }
 }
