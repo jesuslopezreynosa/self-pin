@@ -1,4 +1,3 @@
-// src/stores/location.ts
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 
@@ -9,24 +8,36 @@ import {
     verifyKeyRotationPayload,
     type UnencryptedLocation,
     type KeyRotationPayload
-} from './crypto';
-import { isValidServerUrl } from './urlValidator';
+} from '../services/crypto';
+
+import { isValidServerUrl } from '../services/urlValidator';
+
+export interface GroupKeyConfig {
+    psk: string;
+    keyVersion: number;
+}
 
 export interface DecryptedMemberFeed {
     id: number;
     name: string;
+    groupId: string;
     lastUpdated: string;
     location: UnencryptedLocation | null;
     keyVersion?: number;
 }
 
 export const useLocationStore = defineStore('location', () => {
-    // State
+    // User & Authentication State
     const deviceToken = ref<string>(localStorage.getItem('deviceToken') || '');
-    const pskPassphrase = ref<string>(localStorage.getItem('pskPassphrase') || '');
+    const userSigningKey = ref<string>(localStorage.getItem('userSigningKey') || '');
     const apiBaseUrl = ref<string>(localStorage.getItem('apiBaseUrl') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5180');
-    const currentKeyVersion = ref<number>(Number(localStorage.getItem('keyVersion')) || 1);
 
+    // Group-Specific Encryption Keys State: Record<groupId, { psk, keyVersion }>
+    const groupKeys = ref<Record<string, GroupKeyConfig>>(
+        JSON.parse(localStorage.getItem('groupKeys') || '{}')
+    );
+
+    // UI & Location State
     const familyFeed = ref<DecryptedMemberFeed[]>([]);
     const isUpdating = ref<boolean>(false);
     const isConfigured = ref<boolean>(!!localStorage.getItem('apiBaseUrl') && !!deviceToken.value);
@@ -35,19 +46,27 @@ export const useLocationStore = defineStore('location', () => {
 
     // Getters
     const isAuthenticated = computed(() => deviceToken.value.length > 0);
-    const hasConfiguredPsk = computed(() => pskPassphrase.value.length > 0);
+    const hasGroupKeys = computed(() => Object.keys(groupKeys.value).length > 0);
 
-    // Actions
+    // Key Management Helpers
     function setDeviceToken(token: string) {
         deviceToken.value = token;
         localStorage.setItem('deviceToken', token);
     }
 
-    function setPskPassphrase(passphrase: string, version: number = 1) {
-        pskPassphrase.value = passphrase;
-        currentKeyVersion.value = version;
-        localStorage.setItem('pskPassphrase', passphrase);
-        localStorage.setItem('keyVersion', version.toString());
+    function setUserSigningKey(key: string) {
+        userSigningKey.value = key;
+        localStorage.setItem('userSigningKey', key);
+    }
+
+    function setGroupKey(groupId: string, psk: string, keyVersion: number = 1) {
+        groupKeys.value[groupId] = { psk, keyVersion };
+        localStorage.setItem('groupKeys', JSON.stringify(groupKeys.value));
+    }
+
+    function removeGroupKey(groupId: string) {
+        delete groupKeys.value[groupId];
+        localStorage.setItem('groupKeys', JSON.stringify(groupKeys.value));
     }
 
     /**
@@ -86,6 +105,9 @@ export const useLocationStore = defineStore('location', () => {
 
             const data = await response.json();
             setDeviceToken(data.deviceToken);
+            if (data.userSigningKey) {
+                setUserSigningKey(data.userSigningKey);
+            }
             isConfigured.value = true;
             return data;
         } catch (err: any) {
@@ -97,7 +119,7 @@ export const useLocationStore = defineStore('location', () => {
     /**
      * Creates a location sharing group with another device via their Server Device Token.
      */
-    async function shareLocationWithDevice(targetDeviceId: string, groupName?: string) {
+    async function shareLocationWithDevice(targetDeviceId: string, groupName?: string, initialPsk?: string) {
         if (!isAuthenticated.value) {
             throw new Error('Device is not authenticated.');
         }
@@ -123,6 +145,12 @@ export const useLocationStore = defineStore('location', () => {
             }
 
             const groupData = await response.json();
+
+            // If an initial PSK was specified for this new group, store it locally
+            if (groupData.groupId && initialPsk) {
+                setGroupKey(groupData.groupId, initialPsk, 1);
+            }
+
             await fetchFeed();
             return groupData;
         } catch (err: any) {
@@ -156,11 +184,11 @@ export const useLocationStore = defineStore('location', () => {
     }
 
     /**
-     * Encrypts raw GPS coordinates and posts payload to backend.
+     * Encrypts and publishes location updates for each group the user belongs to using that group's active PSK.
      */
     async function publishLocation(coords: { latitude: number; longitude: number; accuracy?: number; }) {
-        if (!isAuthenticated.value || !hasConfiguredPsk.value) {
-            error.value = 'Device token or PSK passphrase missing.';
+        if (!isAuthenticated.value || !hasGroupKeys.value) {
+            error.value = 'Device token or group encryption keys missing.';
             return;
         }
 
@@ -168,22 +196,26 @@ export const useLocationStore = defineStore('location', () => {
         error.value = null;
 
         try {
-            const encryptedPayload = await encryptLocationPayload(coords, pskPassphrase.value);
+            // Publish encrypted payload to each configured group independently
+            for (const [groupId, groupConfig] of Object.entries(groupKeys.value)) {
+                const encryptedPayload = await encryptLocationPayload(coords, groupConfig.psk);
 
-            const response = await fetch(`${apiBaseUrl.value}/api/v1/location/update`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Device-Token': deviceToken.value
-                },
-                body: JSON.stringify({
-                    encryptedPayload,
-                    keyVersion: currentKeyVersion.value
-                })
-            });
+                const response = await fetch(`${apiBaseUrl.value}/api/v1/location/update`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Device-Token': deviceToken.value
+                    },
+                    body: JSON.stringify({
+                        groupId,
+                        encryptedPayload,
+                        keyVersion: groupConfig.keyVersion
+                    })
+                });
 
-            if (!response.ok) {
-                throw new Error(`Failed to update location: ${response.statusText}`);
+                if (!response.ok) {
+                    console.warn(`Failed to update location for group ${groupId}: ${response.statusText}`);
+                }
             }
         } catch (err: any) {
             error.value = err.message || 'Error publishing location.';
@@ -193,15 +225,16 @@ export const useLocationStore = defineStore('location', () => {
     }
 
     /**
-     * Triggers a key rotation signed with the active PSK.
+     * Initiates a key rotation for a specific group signed with that group's active PSK.
      */
     async function initiateKeyRotation(groupId: string, newPassphrase: string) {
-        if (!isAuthenticated.value || !hasConfiguredPsk.value) {
-            error.value = 'Cannot rotate keys: Client is unauthenticated or missing PSK.';
+        const groupConfig = groupKeys.value[groupId];
+        if (!isAuthenticated.value || !groupConfig) {
+            error.value = `Cannot rotate keys: Group ${groupId} is not configured on this client.`;
             return;
         }
 
-        const nextVersion = currentKeyVersion.value + 1;
+        const nextVersion = groupConfig.keyVersion + 1;
         const encryptedNewKey = btoa(newPassphrase);
 
         const rotationPayload: KeyRotationPayload = {
@@ -210,7 +243,8 @@ export const useLocationStore = defineStore('location', () => {
             encryptedNewKey
         };
 
-        const signature = await signKeyRotationPayload(rotationPayload, pskPassphrase.value);
+        // HMAC signature signed with the current active PSK of this specific group
+        const signature = await signKeyRotationPayload(rotationPayload, groupConfig.psk);
         rotationPayload.signature = signature;
 
         const response = await fetch(`${apiBaseUrl.value}/api/v1/location/rotate-key`, {
@@ -223,35 +257,41 @@ export const useLocationStore = defineStore('location', () => {
         });
 
         if (!response.ok) {
-            throw new Error('Server rejected key rotation request.');
+            throw new Error(`Server rejected key rotation request for group ${groupId}.`);
         }
 
-        setPskPassphrase(newPassphrase, nextVersion);
+        setGroupKey(groupId, newPassphrase, nextVersion);
     }
 
     /**
-     * Process pending rotation requests after verification against active PSK.
+     * Processes pending rotation requests for a specific group after verifying HMAC signature.
      */
-    async function processPendingKeyRotation(rotationPayload: KeyRotationPayload): Promise<boolean> {
-        const isValid = await verifyKeyRotationPayload(rotationPayload, pskPassphrase.value);
+    async function processPendingKeyRotation(groupId: string, rotationPayload: KeyRotationPayload): Promise<boolean> {
+        const groupConfig = groupKeys.value[groupId];
+        if (!groupConfig) {
+            console.error(`Cannot process key rotation: Missing PSK configuration for group ${groupId}.`);
+            return false;
+        }
+
+        const isValid = await verifyKeyRotationPayload(rotationPayload, groupConfig.psk);
 
         if (!isValid) {
-            console.error('Security Violation: Unauthorized key rotation attempt detected!');
-            error.value = 'Security Alert: Failed to verify key rotation from server.';
+            console.error(`Security Violation: Unauthorized key rotation attempt for group ${groupId}!`);
+            error.value = `Security Alert: Failed to verify key rotation for group ${groupId}.`;
             return false;
         }
 
         const newPassphrase = atob(rotationPayload.encryptedNewKey);
-        setPskPassphrase(newPassphrase, rotationPayload.newKeyVersion);
+        setGroupKey(groupId, newPassphrase, rotationPayload.newKeyVersion);
         return true;
     }
 
     /**
-     * Fetches shared feed and decrypts entry payloads using local PSK.
+     * Fetches shared feed and decrypts entry payloads using group-specific PSKs.
      */
     async function fetchFeed() {
-        if (!isAuthenticated.value || !hasConfiguredPsk.value) {
-            error.value = 'Device token or PSK passphrase missing.';
+        if (!isAuthenticated.value) {
+            error.value = 'Device token missing.';
             return;
         }
 
@@ -270,7 +310,7 @@ export const useLocationStore = defineStore('location', () => {
             }
 
             if (!response.ok) {
-                throw new Error('Failed to fetch group feed.');
+                throw new Error('Failed to fetch location feed.');
             }
 
             const rawFeed = await response.json();
@@ -278,21 +318,23 @@ export const useLocationStore = defineStore('location', () => {
             const decryptedEntries = await Promise.all(
                 rawFeed.map(async (member: any) => {
                     let location: UnencryptedLocation | null = null;
+                    const groupConfig = groupKeys.value[member.groupId];
 
-                    if (member.latestEntry?.encryptedPayload) {
+                    if (member.latestEntry?.encryptedPayload && groupConfig) {
                         try {
                             location = await decryptLocationPayload(
                                 member.latestEntry.encryptedPayload,
-                                pskPassphrase.value
+                                groupConfig.psk
                             );
                         } catch (decryptionErr) {
-                            console.warn(`Could not decrypt payload for user ${member.id}.`);
+                            console.warn(`Could not decrypt payload for user ${member.id} in group ${member.groupId}. Key mismatch or pending rotation?`);
                         }
                     }
 
                     return {
                         id: member.id,
                         name: member.name,
+                        groupId: member.groupId,
                         lastUpdated: member.lastUpdated,
                         keyVersion: member.latestEntry?.keyVersion,
                         location
@@ -325,8 +367,9 @@ export const useLocationStore = defineStore('location', () => {
             const data = await response.json();
 
             for (const group of data.groups) {
-                if (group.pendingKeyRotation) {
-                    console.warn(`Pending key rotation detected for group ${group.groupId}.`);
+                if (group.pendingKeyRotation && group.rotationPayload) {
+                    console.warn(`Pending key rotation detected for group ${group.groupId}. Processing...`);
+                    await processPendingKeyRotation(group.groupId, group.rotationPayload);
                 }
             }
         } catch (err: any) {
@@ -334,11 +377,17 @@ export const useLocationStore = defineStore('location', () => {
         }
     }
 
+    function resetDeviceAuth() {
+        deviceToken.value = '';
+        localStorage.removeItem('deviceToken');
+        isConfigured.value = false;
+    }
+
     return {
         // State
         deviceToken,
-        pskPassphrase,
-        currentKeyVersion,
+        userSigningKey,
+        groupKeys,
         apiBaseUrl,
         familyFeed,
         isUpdating,
@@ -348,11 +397,13 @@ export const useLocationStore = defineStore('location', () => {
 
         // Getters
         isAuthenticated,
-        hasConfiguredPsk,
+        hasGroupKeys,
 
         // Actions
         setDeviceToken,
-        setPskPassphrase,
+        setUserSigningKey,
+        setGroupKey,
+        removeGroupKey,
         configureServerUrl,
         registerDevice,
         shareLocationWithDevice,
@@ -361,6 +412,7 @@ export const useLocationStore = defineStore('location', () => {
         initiateKeyRotation,
         processPendingKeyRotation,
         fetchFeed,
-        checkUserStatus
+        checkUserStatus,
+        resetDeviceAuth
     };
 });

@@ -35,47 +35,55 @@ describe('Location Pinia Store', () => {
             const store = useLocationStore();
 
             expect(store.deviceToken).toBe('');
-            expect(store.pskPassphrase).toBe('');
-            expect(store.currentKeyVersion).toBe(1);
+            expect(store.userSigningKey).toBe('');
+            expect(store.groupKeys).toEqual({});
             expect(store.isAuthenticated).toBe(false);
-            expect(store.hasConfiguredPsk).toBe(false);
+            expect(store.hasGroupKeys).toBe(false);
             expect(store.familyFeed).toEqual([]);
         });
 
-        it('should set credentials and persist them to localStorage', () => {
+        it('should set credentials and group keys and persist them to localStorage', () => {
             const store = useLocationStore();
 
             store.setDeviceToken('device-123');
-            store.setPskPassphrase('secret-key-32-chars-long!', 2);
+            store.setUserSigningKey('user-identity-signing-key');
+            store.setGroupKey('group-abc', 'secret-psk-32-chars-long!', 1);
 
             expect(store.deviceToken).toBe('device-123');
-            expect(store.pskPassphrase).toBe('secret-key-32-chars-long!');
-            expect(store.currentKeyVersion).toBe(2);
+            expect(store.userSigningKey).toBe('user-identity-signing-key');
+            expect(store.groupKeys['group-abc']).toEqual({ psk: 'secret-psk-32-chars-long!', keyVersion: 1 });
             expect(store.isAuthenticated).toBe(true);
-            expect(store.hasConfiguredPsk).toBe(true);
+            expect(store.hasGroupKeys).toBe(true);
 
             expect(localStorage.getItem('deviceToken')).toBe('device-123');
-            expect(localStorage.getItem('pskPassphrase')).toBe('secret-key-32-chars-long!');
-            expect(localStorage.getItem('keyVersion')).toBe('2');
+            expect(localStorage.getItem('userSigningKey')).toBe('user-identity-signing-key');
+            expect(JSON.parse(localStorage.getItem('groupKeys') || '{}')).toEqual({
+                'group-abc': { psk: 'secret-psk-32-chars-long!', keyVersion: 1 }
+            });
         });
     });
 
     describe('Publishing Location', () => {
-        it('should set an error if client is unauthenticated', async () => {
+        it('should set an error if client is unauthenticated or missing group keys', async () => {
             const store = useLocationStore();
             const coords = { latitude: 37.7749, longitude: -122.4194 };
 
             await store.publishLocation(coords);
 
-            expect(store.error).toBe('Device token or PSK passphrase missing.');
+            expect(store.error).toBe('Device token or group encryption keys missing.');
         });
 
-        it('should encrypt coords and POST them to the server when authenticated', async () => {
+        it('should loop through all configured groups, encrypting and POSTing to each independently', async () => {
             const store = useLocationStore();
             store.setDeviceToken('device-123');
-            store.setPskPassphrase('secret-key-32-chars-long!');
 
-            vi.spyOn(cryptoService, 'encryptLocationPayload').mockResolvedValue('encrypted-blob');
+            // Configured for 2 distinct groups
+            store.setGroupKey('group-abc', 'psk-for-group-abc', 1);
+            store.setGroupKey('group-xyz', 'psk-for-group-xyz', 2);
+
+            vi.spyOn(cryptoService, 'encryptLocationPayload')
+                .mockResolvedValueOnce('blob-abc')
+                .mockResolvedValueOnce('blob-xyz');
 
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true
@@ -84,35 +92,51 @@ describe('Location Pinia Store', () => {
             const coords = { latitude: 37.7749, longitude: -122.4194 };
             await store.publishLocation(coords);
 
-            expect(cryptoService.encryptLocationPayload).toHaveBeenCalledWith(coords, 'secret-key-32-chars-long!');
-            expect(fetchSpy).toHaveBeenCalledWith(
+            // Assert encryption was invoked twice with respective PSKs
+            expect(cryptoService.encryptLocationPayload).toHaveBeenCalledTimes(2);
+            expect(cryptoService.encryptLocationPayload).toHaveBeenNthCalledWith(1, coords, 'psk-for-group-abc');
+            expect(cryptoService.encryptLocationPayload).toHaveBeenNthCalledWith(2, coords, 'psk-for-group-xyz');
+
+            // Assert fetch was invoked twice with correct payloads
+            expect(fetchSpy).toHaveBeenCalledTimes(2);
+            expect(fetchSpy).toHaveBeenNthCalledWith(
+                1,
                 'http://localhost:5180/api/v1/location/update',
                 expect.objectContaining({
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Device-Token': 'device-123'
-                    },
                     body: JSON.stringify({
-                        encryptedPayload: 'encrypted-blob',
+                        groupId: 'group-abc',
+                        encryptedPayload: 'blob-abc',
                         keyVersion: 1
                     })
                 })
             );
+            expect(fetchSpy).toHaveBeenNthCalledWith(
+                2,
+                'http://localhost:5180/api/v1/location/update',
+                expect.objectContaining({
+                    body: JSON.stringify({
+                        groupId: 'group-xyz',
+                        encryptedPayload: 'blob-xyz',
+                        keyVersion: 2
+                    })
+                })
+            );
+
             expect(store.error).toBeNull();
         });
     });
 
     describe('Fetching and Decrypting Feed', () => {
-        it('should fetch feed and decrypt entries successfully', async () => {
+        it('should fetch feed and decrypt entries successfully using group PSK', async () => {
             const store = useLocationStore();
             store.setDeviceToken('device-123');
-            store.setPskPassphrase('secret-key-32-chars-long!');
+            store.setGroupKey('group-abc', 'secret-psk-group-abc', 1);
 
             const mockRawFeed = [
                 {
                     id: 1,
                     name: 'Dad',
+                    groupId: 'group-abc',
                     lastUpdated: '2026-09-05T10:00:00Z',
                     latestEntry: {
                         encryptedPayload: 'encrypted-payload-dad',
@@ -136,6 +160,7 @@ describe('Location Pinia Store', () => {
             expect(store.familyFeed[0]).toEqual({
                 id: 1,
                 name: 'Dad',
+                groupId: 'group-abc',
                 lastUpdated: '2026-09-05T10:00:00Z',
                 keyVersion: 1,
                 location: decryptedCoords
@@ -145,7 +170,7 @@ describe('Location Pinia Store', () => {
         it('should handle payload decryption failures gracefully', async () => {
             const store = useLocationStore();
             store.setDeviceToken('device-123');
-            store.setPskPassphrase('secret-key-32-chars-long!');
+            store.setGroupKey('group-abc', 'secret-psk-group-abc', 1);
 
             vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
@@ -154,6 +179,7 @@ describe('Location Pinia Store', () => {
                     {
                         id: 2,
                         name: 'Mom',
+                        groupId: 'group-abc',
                         lastUpdated: '2026-09-05T10:00:00Z',
                         latestEntry: { encryptedPayload: 'invalid-encrypted-payload' }
                     }
@@ -170,10 +196,10 @@ describe('Location Pinia Store', () => {
     });
 
     describe('Key Rotation & Verification', () => {
-        it('should sign key rotation payloads and post to server when initiating rotation', async () => {
+        it('should sign key rotation payloads using group PSK and post to server', async () => {
             const store = useLocationStore();
             store.setDeviceToken('device-123');
-            store.setPskPassphrase('old-passphrase-key!', 1);
+            store.setGroupKey('group-abc', 'old-psk-group-abc', 1);
 
             vi.spyOn(cryptoService, 'signKeyRotationPayload').mockResolvedValue('valid-hmac-signature');
 
@@ -183,7 +209,15 @@ describe('Location Pinia Store', () => {
 
             await store.initiateKeyRotation('group-abc', 'new-secret-passphrase!');
 
-            expect(cryptoService.signKeyRotationPayload).toHaveBeenCalled();
+            expect(cryptoService.signKeyRotationPayload).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    groupId: 'group-abc',
+                    newKeyVersion: 2,
+                    encryptedNewKey: btoa('new-secret-passphrase!')
+                }),
+                'old-psk-group-abc'
+            );
+
             expect(fetchSpy).toHaveBeenCalledWith(
                 'http://localhost:5180/api/v1/location/rotate-key',
                 expect.objectContaining({
@@ -197,13 +231,15 @@ describe('Location Pinia Store', () => {
                 })
             );
 
-            expect(store.pskPassphrase).toBe('new-secret-passphrase!');
-            expect(store.currentKeyVersion).toBe(2);
+            expect(store.groupKeys['group-abc']).toEqual({
+                psk: 'new-secret-passphrase!',
+                keyVersion: 2
+            });
         });
 
         it('should reject pending key rotation if signature verification fails', async () => {
             const store = useLocationStore();
-            store.setPskPassphrase('active-passphrase', 1);
+            store.setGroupKey('group-abc', 'active-passphrase', 1);
 
             vi.spyOn(cryptoService, 'verifyKeyRotationPayload').mockResolvedValue(false);
 
@@ -214,17 +250,19 @@ describe('Location Pinia Store', () => {
                 signature: 'invalid-signature'
             };
 
-            const result = await store.processPendingKeyRotation(maliciousPayload);
+            const result = await store.processPendingKeyRotation('group-abc', maliciousPayload);
 
             expect(result).toBe(false);
-            expect(store.error).toBe('Security Alert: Failed to verify key rotation from server.');
-            expect(store.pskPassphrase).toBe('active-passphrase');
-            expect(store.currentKeyVersion).toBe(1);
+            expect(store.error).toBe('Security Alert: Failed to verify key rotation for group group-abc.');
+            expect(store.groupKeys['group-abc']).toEqual({
+                psk: 'active-passphrase',
+                keyVersion: 1
+            });
         });
 
         it('should accept pending key rotation and update local PSK if signature verification succeeds', async () => {
             const store = useLocationStore();
-            store.setPskPassphrase('active-passphrase', 1);
+            store.setGroupKey('group-abc', 'active-passphrase', 1);
 
             vi.spyOn(cryptoService, 'verifyKeyRotationPayload').mockResolvedValue(true);
 
@@ -235,11 +273,13 @@ describe('Location Pinia Store', () => {
                 signature: 'valid-signature'
             };
 
-            const result = await store.processPendingKeyRotation(validPayload);
+            const result = await store.processPendingKeyRotation('group-abc', validPayload);
 
             expect(result).toBe(true);
-            expect(store.pskPassphrase).toBe('next-gen-passphrase');
-            expect(store.currentKeyVersion).toBe(2);
+            expect(store.groupKeys['group-abc']).toEqual({
+                psk: 'next-gen-passphrase',
+                keyVersion: 2
+            });
         });
     });
 });
