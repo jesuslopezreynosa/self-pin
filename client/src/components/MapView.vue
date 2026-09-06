@@ -197,8 +197,26 @@ onUnmounted(() => {
         <button class="btn-center-location" :class="{ 'is-loading': isLocating, 'is-active': isCentered }"
             @click="centerOnUserLocation" title="Center on my location" :disabled="isLocating">
             <span v-if="isLocating" class="spinner"></span>
-            <span v-else-if="isCentered" class="sf-icon">􀋒</span>
-            <span v-else class="sf-icon">􀋑</span>
+            <svg v-else-if="isCentered" class="svg-icon" fill="currentColor" version="1.1"
+                xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+                viewBox="0 0 20.1513 18.398">
+                <g>
+                    <rect height="18.398" opacity="0" width="20.1513" x="0" y="0" />
+                    <path
+                        d="M1.29145 9.82891L8.41059 9.8582C8.55707 9.8582 8.6059 9.90703 8.6059 10.0535L8.62543 17.1141C8.62543 18.5691 10.3735 18.9109 11.0278 17.4949L18.2446 1.97734C18.8989 0.551563 17.7758-0.385937 16.4086 0.248829L0.803167 7.48516C-0.446833 8.06133-0.202692 9.81914 1.29145 9.82891Z"
+                        fill-opacity="0.85" />
+                </g>
+            </svg>
+            <svg v-else class="svg-icon" fill="none" stroke="currentColor" stroke-width=".7" version="1.1"
+                xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+                viewBox="0 0 20.2703 18.4783">
+                <g>
+                    <rect height="18.4783" opacity="0" width="20.2703" x="0" y="0" />
+                    <path
+                        d="M0.833401 7.47647C-0.514255 8.10147-0.143161 9.90811 1.34121 9.91787L8.46035 9.94717C8.57754 9.94717 8.60684 9.97647 8.60684 10.0937L8.62637 17.1542C8.63614 18.6972 10.4721 18.9706 11.1264 17.5546L18.3432 2.03701C19.0072 0.591702 17.8744-0.433689 16.4389 0.240139ZM2.53262 8.39444C2.49356 8.39444 2.48379 8.35537 2.53262 8.33584L16.5658 1.91006C16.6342 1.88076 16.6635 1.9003 16.6342 1.97842L10.1693 16.0019C10.1596 16.0409 10.1205 16.0312 10.1205 15.9921L10.1693 9.0878C10.1693 8.65811 9.8666 8.35537 9.42715 8.35537Z"
+                        fill-opacity="0.85" />
+                </g>
+            </svg>
         </button>
     </div>
 </template>
@@ -251,13 +269,10 @@ onUnmounted(() => {
     transform: scale(0.92);
 }
 
-/* SF Symbol Styling with Fallback */
-.sf-icon {
-    font-family: -apple-system, SF Pro Text, SF Pro Icons, "SF Pro", system-ui, sans-serif;
-    font-size: 1.25rem;
-    font-weight: 500;
-    line-height: 1;
-    -webkit-font-smoothing: antialiased;
+.svg-icon {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
 }
 
 .spinner {
