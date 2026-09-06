@@ -5,26 +5,20 @@ import MapView from './components/MapView.vue';
 import OnboardingModal from './components/OnboardingModal.vue';
 import PeopleDrawer from './components/PeopleDrawer.vue';
 import SettingsModal from './components/SettingsModal.vue';
-import { useLocationStore } from './services/location.ts';
-import {
-    startBackgroundLocationWatcher,
-    stopBackgroundLocationWatcher
-} from './services/locationWorker';
+import ShareModal from './components/ShareModal.vue';
+import { useLocationStore } from './services/location';
 
 const locationStore = useLocationStore();
 const isSettingsOpen = ref(false);
+const isShareOpen = ref(false);
+
 let pollInterval: number | null = null;
 
 onMounted(async () => {
     if (locationStore.isAuthenticated && locationStore.hasGroupKeys) {
-        // Initial data sync
         await locationStore.checkUserStatus();
         await locationStore.fetchFeed();
 
-        // Start background location updates across active groups
-        await startBackgroundLocationWatcher();
-
-        // Periodic feed and rotation check
         pollInterval = window.setInterval(async () => {
             await locationStore.checkUserStatus();
             await locationStore.fetchFeed();
@@ -32,10 +26,14 @@ onMounted(async () => {
     }
 });
 
-onUnmounted(async () => {
+onUnmounted(() => {
     if (pollInterval) clearInterval(pollInterval);
-    await stopBackgroundLocationWatcher();
 });
+
+// Refresh list after creating a new group share
+async function handleShareCreated() {
+    await locationStore.fetchFeed();
+}
 </script>
 
 <template>
@@ -46,10 +44,11 @@ onUnmounted(async () => {
         <!-- Active Interface with Map and Sliding Drawer -->
         <template v-else>
             <MapView />
-            <PeopleDrawer @openSettings="isSettingsOpen = true" />
+            <PeopleDrawer @openSettings="isSettingsOpen = true" @openShare="isShareOpen = true" />
         </template>
 
-        <!-- Settings Modal -->
+        <!-- Modals -->
         <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
+        <ShareModal v-if="isShareOpen" @close="isShareOpen = false" @created="handleShareCreated" />
     </main>
 </template>

@@ -3,7 +3,7 @@ import { ref } from 'vue';
 
 import { useLocationStore } from '../services/location';
 
-const emit = defineEmits(['openSettings']);
+const emit = defineEmits(['openSettings', 'openShare']);
 const locationStore = useLocationStore();
 
 const activeTab = ref<'people' | 'me'>('people');
@@ -26,7 +26,7 @@ function formatTime(isoString: string) {
         <div v-if="activeTab === 'people'" class="tab-content">
             <div class="drawer-header">
                 <h2>People</h2>
-                <button class="btn-add" title="Share Location">+</button>
+                <button class="btn-add sf-icon" title="Share Location" @click="$emit('openShare')">􀅼</button>
             </div>
 
             <div class="member-list">
@@ -59,7 +59,7 @@ function formatTime(isoString: string) {
             <div class="me-section">
                 <div class="me-card">
                     <div class="me-info">
-                        <span class="label">Device Token:</span>
+                        <span class="label">Sharing ID:</span>
                         <code class="token-display">{{ locationStore.deviceToken || 'Not Configured' }}</code>
                     </div>
                     <div class="me-info">
@@ -69,7 +69,7 @@ function formatTime(isoString: string) {
                 </div>
 
                 <button class="btn-manage-settings" @click="emit('openSettings')">
-                    ⚙️ Manage App Settings
+                    <span class="sf-icon">􀍟</span> Manage App Settings
                 </button>
             </div>
         </div>
@@ -78,13 +78,13 @@ function formatTime(isoString: string) {
         <nav class="bottom-tab-bar">
             <button class="tab-button" :class="{ active: activeTab === 'people' }"
                 @click="activeTab = 'people'; isExpanded = true">
-                <span class="tab-icon">👥</span>
+                <span class="tab-icon sf-icon">􀝋</span>
                 <span class="tab-label">People</span>
             </button>
 
             <button class="tab-button" :class="{ active: activeTab === 'me' }"
                 @click="activeTab = 'me'; isExpanded = true">
-                <span class="tab-icon">📍</span>
+                <span class="tab-icon sf-icon">􃂈</span>
                 <span class="tab-label">Me</span>
             </button>
         </nav>
@@ -92,6 +92,18 @@ function formatTime(isoString: string) {
 </template>
 
 <style scoped>
+/* 1. Reset font family across all elements inside the drawer */
+.findmy-drawer,
+.findmy-drawer *,
+button,
+h2,
+span,
+code,
+div {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+    box-sizing: border-box;
+}
+
 .findmy-drawer {
     position: absolute;
     bottom: 0;
@@ -107,8 +119,12 @@ function formatTime(isoString: string) {
     box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.12);
     z-index: 1000;
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    padding: 0 1.25rem 0.75rem 1.25rem;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+
+    /* Safe Area Padding for iOS Gesture Bar */
+    padding-top: 0;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
 .findmy-drawer.is-collapsed {
@@ -160,6 +176,9 @@ function formatTime(isoString: string) {
     font-weight: 600;
     color: #0f172a;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .member-list {
@@ -260,6 +279,10 @@ function formatTime(isoString: string) {
     font-weight: 600;
     font-size: 0.9rem;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
 }
 
 /* Bottom Tab Navigation Styles */
@@ -289,11 +312,19 @@ function formatTime(isoString: string) {
 }
 
 .tab-icon {
-    font-size: 1.2rem;
+    font-size: 1.25rem;
 }
 
 .tab-label {
     font-size: 0.7rem;
     font-weight: 600;
+}
+
+/* SF Symbol Helper Class */
+.sf-icon {
+    font-family: -apple-system, SF Pro Text, SF Pro Icons, "SF Pro", system-ui, sans-serif !important;
+    font-weight: 500;
+    line-height: 1;
+    -webkit-font-smoothing: antialiased;
 }
 </style>

@@ -32,7 +32,7 @@ function saveSettings() {
 }
 
 function resetDeviceAuth() {
-    if (confirm('Are you sure you want to disconnect this device? This will clear your device token and bring up onboarding.')) {
+    if (confirm('Are you sure you want to disconnect this device? This will clear your sharing ID and bring up onboarding.')) {
         locationStore.setDeviceToken('');
         localStorage.removeItem('deviceToken');
         locationStore.isConfigured = false;
@@ -55,9 +55,9 @@ function resetDeviceAuth() {
                     <h4>User & Device Identity</h4>
 
                     <div class="form-group">
-                        <label>Device ID</label>
-                        <input type="text" :value="locationStore.deviceToken || 'No active device token issued'"
-                            readonly class="readonly-input" />
+                        <label>Sharing ID</label>
+                        <input type="text" :value="locationStore.deviceToken || 'No active sharing ID issued'" readonly
+                            class="readonly-input" />
                         <small>Issued directly by the server administrator.</small>
                     </div>
 
@@ -122,7 +122,7 @@ function resetDeviceAuth() {
             </div>
 
             <div class="modal-footer">
-                <button type="button" class="btn-danger" @click="resetDeviceAuth">Reset / Disconnect Device</button>
+                <button type="button" class="btn-danger" @click="resetDeviceAuth">Disconnect App</button>
                 <div class="footer-actions">
                     <button type="button" class="btn-cancel" @click="emit('close')">Cancel</button>
                     <button type="button" class="btn-primary" @click="saveSettings">Save Configuration</button>
@@ -151,30 +151,40 @@ label {
     align-items: center;
     justify-content: center;
     z-index: 3000;
+
+    /* Account for iOS Safe Areas (Top notch & bottom gesture bar) */
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
 }
 
 .modal-card {
     background: #ffffff;
-    width: 90%;
-    max-width: 520px;
-    max-height: 90vh;
-    border-radius: 1rem;
+    width: 100%;
+    max-width: 500px;
+    /* Limit height so footer stays visible within safe area boundary */
+    max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 2rem);
+    border-radius: 1.25rem;
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    /* Prevents child items from spilling out */
 }
 
 .modal-header {
-    padding: 1.25rem 1.5rem;
+    padding: 1.25rem 1.25rem 1rem 1.25rem;
     border-bottom: 1px solid #e2e8f0;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0;
 }
 
 .modal-header h3 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     font-weight: 600;
     color: #0f172a;
 }
@@ -185,14 +195,19 @@ label {
     font-size: 1.5rem;
     color: #64748b;
     cursor: pointer;
+    padding: 0;
+    line-height: 1;
 }
 
 .modal-body {
-    padding: 1.5rem;
+    padding: 1.25rem;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Smooth scrolling on iOS */
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    flex: 1;
 }
 
 .setting-section h4 {
@@ -222,11 +237,12 @@ label {
     color: #334155;
 }
 
+/* Enforce 16px font size to disable iOS Safari focus-zoom */
 .form-group input {
-    padding: 0.6rem;
+    padding: 0.65rem;
     border: 1px solid #cbd5e1;
     border-radius: 0.5rem;
-    font-size: 0.875rem;
+    font-size: 16px !important;
 }
 
 .readonly-input {
@@ -241,6 +257,7 @@ label {
 
 .input-with-button input {
     flex: 1;
+    min-width: 0;
 }
 
 .btn-secondary {
@@ -252,131 +269,62 @@ label {
     font-weight: 600;
     color: #334155;
     cursor: pointer;
+    white-space: nowrap;
 }
 
-.btn-secondary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.warning-text {
-    color: #b45309;
-    font-size: 0.75rem;
-    line-height: 1.3;
-    margin-top: 0.25rem;
-}
-
-.toast-text {
-    color: #16a34a;
-    font-size: 0.75rem;
-    margin: 0;
-}
-
-.empty-state {
-    font-size: 0.8rem;
-    color: #94a3b8;
-    font-style: italic;
-    background: #f8fafc;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    text-align: center;
-}
-
-.group-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.group-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.5rem;
-}
-
-.group-info {
-    display: flex;
-    flex-direction: column;
-}
-
-.group-id {
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: #0f172a;
-}
-
-.key-version {
-    font-size: 0.75rem;
-    color: #64748b;
-}
-
-.status-badge {
-    font-size: 0.7rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 1rem;
-    font-weight: 600;
-}
-
-.status-badge.active {
-    background: #dcfce7;
-    color: #15803d;
-}
-
-hr {
-    border: none;
-    border-top: 1px solid #e2e8f0;
-    margin: 0.25rem 0;
-}
-
+/* --- FOOTER & BUTTON FIXES --- */
 .modal-footer {
-    padding: 1rem 1.5rem;
+    padding: 1rem 1.25rem;
     border-top: 1px solid #e2e8f0;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    /* Stack into two rows on mobile */
+    gap: 0.75rem;
+    background: #ffffff;
+    flex-shrink: 0;
 }
 
 .footer-actions {
     display: flex;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.footer-actions button {
+    flex: 1;
+    /* Split Cancel and Save evenly across the bottom row */
+}
+
+.btn-danger,
+.btn-cancel,
+.btn-primary {
+    padding: 0.7rem 0.75rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    white-space: nowrap;
 }
 
 .btn-danger {
-    padding: 0.6rem 0.85rem;
+    width: 100%;
     background: #fef2f2;
     border: 1px solid #fecaca;
-    border-radius: 0.5rem;
     color: #dc2626;
-    font-weight: 600;
-    font-size: 0.8rem;
-    cursor: pointer;
-}
-
-.btn-danger:hover {
-    background: #fee2e2;
 }
 
 .btn-cancel {
-    padding: 0.6rem 1rem;
     background: #f1f5f9;
     border: none;
-    border-radius: 0.5rem;
     color: #475569;
-    font-weight: 600;
-    cursor: pointer;
 }
 
 .btn-primary {
-    padding: 0.6rem 1rem;
     background: #2563eb;
     border: none;
-    border-radius: 0.5rem;
     color: white;
-    font-weight: 600;
-    cursor: pointer;
 }
 </style>
