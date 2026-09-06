@@ -119,105 +119,103 @@ public class LocationController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Serves POST /api/v1/location/rotate-key
-    /// Receives client-generated HMAC rotation payload and relays it to other group members.
-    /// </summary>
-    [HttpPost("rotate-key")]
-    public async Task<IActionResult> RotateKey(
-        [FromBody] KeyRotationPayloadDto request,
-        [FromHeader(Name = "X-Device-Token")] string? deviceToken)
-    {
-        if (string.IsNullOrEmpty(deviceToken))
-            return Unauthorized(new { error = "Device token header required." });
+    // /// <summary>
+    // /// Serves POST /api/v1/location/rotate-key
+    // /// Receives client-generated HMAC rotation payload and relays it to other group members.
+    // /// </summary>
+    // [HttpPost("rotate-key")]
+    // public async Task<IActionResult> RotateKey(
+    //     [FromBody] KeyRotationPayloadDto request,
+    //     [FromHeader(Name = "X-Device-Token")] string? deviceToken)
+    // {
+    //     if (string.IsNullOrEmpty(deviceToken))
+    //         return Unauthorized(new { error = "Device token header required." });
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
-        if (user == null)
-            return Unauthorized(new { error = "Invalid device token." });
+    //     var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+    //     if (user == null)
+    //         return Unauthorized(new { error = "Invalid device token." });
 
-        var isMember = await _db.GroupMembers.AnyAsync(gm => gm.GroupId == request.GroupId && gm.UserId == user.Id);
-        if (!isMember)
-            return Forbid();
+    //     var isMember = await _db.GroupMembers.AnyAsync(gm => gm.GroupId == request.GroupId && gm.UserId == user.Id);
+    //     if (!isMember)
+    //         return Forbid();
 
-        var group = await _db.Groups
-            .Include(g => g.Members)
-            .FirstOrDefaultAsync(g => g.Id == request.GroupId);
+    //     var group = await _db.Groups
+    //         .Include(g => g.Members)
+    //         .FirstOrDefaultAsync(g => g.Id == request.GroupId);
 
-        if (group == null)
-            return NotFound(new { error = "Group not found." });
+    //     if (group == null)
+    //         return NotFound(new { error = "Group not found." });
 
-        // Update group key state and payload relay
-        group.CurrentKeyVersion = request.NewKeyVersion;
-        group.EncryptedNewKey = request.EncryptedNewKey;
-        group.Signature = request.Signature;
+    //     // Update group key state and payload relay
+    //     group.CurrentKeyVersion = request.NewKeyVersion;
+    //     group.EncryptedNewKey = request.EncryptedNewKey;
+    //     group.Signature = request.Signature;
 
-        // Flag remaining active group members to pick up the new key
-        foreach (var member in group.Members)
-        {
-            if (member.UserId == user.Id)
-            {
-                member.PendingKeyRotation = false; // Sender is already up-to-date
-            }
-            else
-            {
-                member.PendingKeyRotation = true;
-            }
-        }
+    //     // Flag remaining active group members to pick up the new key
+    //     foreach (var member in group.Members)
+    //     {
+    //         if (member.UserId == user.Id)
+    //         {
+    //             member.PendingKeyRotation = false; // Sender is already up-to-date
+    //         }
+    //         else
+    //         {
+    //             member.PendingKeyRotation = true;
+    //         }
+    //     }
 
-        await _db.SaveChangesAsync();
+    //     await _db.SaveChangesAsync();
 
-        return Ok(new { success = true, newKeyVersion = group.CurrentKeyVersion });
-    }
+    //     return Ok(new { success = true, newKeyVersion = group.CurrentKeyVersion });
+    // }
 
-    /// <summary>
-    /// Serves GET /api/v1/location/status
-    /// Provides active group states, pending rotation flags, and rotation payloads for client processing.
-    /// </summary>
-    [HttpGet("status")]
-    public async Task<IActionResult> GetUserStatus([FromHeader(Name = "X-Device-Token")] string? deviceToken)
-    {
-        if (string.IsNullOrEmpty(deviceToken))
-            return Unauthorized(new { error = "Device token header required." });
+    // /// <summary>
+    // /// Serves GET /api/v1/location/status
+    // /// Provides active group states, pending rotation flags, and rotation payloads for client processing.
+    // /// </summary>
+    // [HttpGet("status")]
+    // public async Task<IActionResult> GetUserStatus([FromHeader(Name = "X-Device-Token")] string? deviceToken)
+    // {
+    //     if (string.IsNullOrEmpty(deviceToken))
+    //         return Unauthorized(new { error = "Device token header required." });
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
-        if (user == null)
-            return Unauthorized(new { error = "Invalid device token." });
+    //     var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+    //     if (user == null)
+    //         return Unauthorized(new { error = "Invalid device token." });
 
-        var memberships = await _db.GroupMembers
-            .Where(gm => gm.UserId == user.Id)
-            .Join(_db.Groups, gm => gm.GroupId, g => g.Id, (gm, g) => new
-            {
-                GroupId = g.Id,
-                GroupName = g.Name,
-                g.CurrentKeyVersion,
-                gm.PendingKeyRotation,
-                g.EncryptedNewKey,
-                g.Signature
-            })
-            .ToListAsync();
+    //     var memberships = await _db.GroupMembers
+    //         .Where(gm => gm.UserId == user.Id)
+    //         .Join(_db.Groups, gm => gm.GroupId, g => g.Id, (gm, g) => new
+    //         {
+    //             GroupId = g.Id,
+    //             GroupName = g.Name,
+    //             g.CurrentKeyVersion,
+    //             gm.PendingKeyRotation,
+    //             g.EncryptedNewKey,
+    //             g.Signature
+    //         })
+    //         .ToListAsync();
 
-        var groupStatuses = memberships.Select(m => new
-        {
-            groupId = m.GroupId.ToString(),
-            groupName = m.GroupName,
-            currentKeyVersion = m.CurrentKeyVersion,
-            pendingKeyRotation = m.PendingKeyRotation,
-            rotationPayload = (m.PendingKeyRotation && !string.IsNullOrEmpty(m.EncryptedNewKey)) ? new
-            {
-                groupId = m.GroupId.ToString(),
-                newKeyVersion = m.CurrentKeyVersion,
-                encryptedNewKey = m.EncryptedNewKey,
-                signature = m.Signature
-            } : null
-        });
+    //     var groupStatuses = memberships.Select(m => new
+    //     {
+    //         groupId = m.GroupId.ToString(),
+    //         groupName = m.GroupName,
+    //         currentKeyVersion = m.CurrentKeyVersion,
+    //         pendingKeyRotation = m.PendingKeyRotation,
+    //         rotationPayload = (m.PendingKeyRotation && !string.IsNullOrEmpty(m.EncryptedNewKey)) ? new
+    //         {
+    //             groupId = m.GroupId.ToString(),
+    //             newKeyVersion = m.CurrentKeyVersion,
+    //             encryptedNewKey = m.EncryptedNewKey,
+    //             signature = m.Signature
+    //         } : null
+    //     });
 
-        return Ok(new
-        {
-            userId = user.Id,
-            userName = user.Name,
-            groups = groupStatuses
-        });
-    }
-
-
+    //     return Ok(new
+    //     {
+    //         userId = user.Id,
+    //         userName = user.Name,
+    //         groups = groupStatuses
+    //     });
+    // }
 }

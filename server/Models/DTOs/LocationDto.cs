@@ -5,5 +5,3 @@ public record EncryptedLocationUpdateRequest(
     int KeyVersion,
     DateTime? Timestamp
 );
-
-public record CreateUserRequest(string Name);

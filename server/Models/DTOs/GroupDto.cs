@@ -1,13 +1,6 @@
 namespace LocationServer.Models.DTOs;
 
-public record RegisterKeyRequest(string SigningPublicKey);
-
-public record GroupKeyResponseDto(
-    Guid GroupId,
-    int KeyVersion,
-    string EncryptedPsk,
-    DateTime UpdatedAt
-);
+public record CreateGroupRequest(string Name);
 
 public record GroupMemberKeyEnvelope(
     int UserId,
@@ -16,8 +9,13 @@ public record GroupMemberKeyEnvelope(
 
 public record PostGroupKeysRequest(
     Guid GroupId,
-    int NewKeyVersion,
+    int KeyVersion,
     List<GroupMemberKeyEnvelope> Envelopes
 );
 
-// public record AssignUserGroupRequest(Guid GroupId, int UserId);
+public record GroupKeyResponseDto(
+    Guid GroupId,
+    int KeyVersion,
+    string EncryptedPsk,
+    DateTime CreatedAt
+);

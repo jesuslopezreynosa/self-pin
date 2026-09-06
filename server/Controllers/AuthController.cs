@@ -20,11 +20,16 @@ public class AuthController : ControllerBase
         [FromBody] RegisterKeyRequest req,
         [FromHeader(Name = "Authorization")] string? authHeader)
     {
-        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
-        if (string.IsNullOrEmpty(token)) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(authHeader))
+            return Unauthorized(new { error = "Authorization header missing." });
+
+        var token = authHeader.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrEmpty(token))
+            return Unauthorized(new { error = "Invalid token format." });
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == token);
-        if (user == null) return Unauthorized();
+        if (user == null)
+            return Unauthorized(new { error = "User not found." });
 
         user.SigningPublicKey = req.SigningPublicKey;
         await _db.SaveChangesAsync();

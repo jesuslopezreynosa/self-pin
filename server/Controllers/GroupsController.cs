@@ -17,6 +17,45 @@ public class GroupsController : ControllerBase
     }
 
     /// <summary>
+    /// Creates a new location sharing group and adds the requesting user as a member.
+    /// </summary>
+    [HttpPost]
+    public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest req, [FromHeader(Name = "Authorization")] string? authHeader)
+    {
+        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrEmpty(token)) return Unauthorized();
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == token);
+        if (user == null) return Unauthorized();
+
+        var group = new Group
+        {
+            Id = Guid.NewGuid(),
+            Name = req.Name,
+            CurrentKeyVersion = 1
+        };
+
+        _db.Groups.Add(group);
+
+        // Add creator as initial group member
+        _db.GroupMembers.Add(new GroupMember
+        {
+            Id = Guid.NewGuid(),
+            GroupId = group.Id,
+            UserId = user.Id
+        });
+
+        await _db.SaveChangesAsync();
+
+        return Created($"/api/v1/groups/{group.Id}", new
+        {
+            id = group.Id,
+            name = group.Name,
+            currentKeyVersion = group.CurrentKeyVersion
+        });
+    }
+
+    /// <summary>
     /// Fetches the latest encrypted group PSK envelopes for the authenticated user.
     /// </summary>
     [HttpGet("keys")]
@@ -33,8 +72,12 @@ public class GroupsController : ControllerBase
             .Select(gm => gm.GroupId)
             .ToListAsync();
 
-        var latestKeys = await _db.GroupKeys
+        // Fetch keys for the user's groups into memory first to avoid EF Core LINQ translation limits
+        var allKeys = await _db.GroupKeys
             .Where(gk => userGroupIds.Contains(gk.GroupId) && gk.UserId == user.Id)
+            .ToListAsync();
+
+        var latestKeys = allKeys
             .GroupBy(gk => gk.GroupId)
             .Select(g => g.OrderByDescending(k => k.KeyVersion).First())
             .Select(gk => new GroupKeyResponseDto(
@@ -43,7 +86,7 @@ public class GroupsController : ControllerBase
                 gk.EncryptedPsk,
                 gk.CreatedAt
             ))
-            .ToListAsync();
+            .ToList();
 
         return Ok(new { group_keys = latestKeys });
     }
@@ -69,7 +112,7 @@ public class GroupsController : ControllerBase
         var group = await _db.Groups.FirstOrDefaultAsync(g => g.Id == req.GroupId);
         if (group == null) return NotFound("Group not found.");
 
-        group.CurrentKeyVersion = req.NewKeyVersion;
+        group.CurrentKeyVersion = req.KeyVersion;
 
         foreach (var env in req.Envelopes)
         {
@@ -77,7 +120,7 @@ public class GroupsController : ControllerBase
             {
                 GroupId = req.GroupId,
                 UserId = env.UserId,
-                KeyVersion = req.NewKeyVersion,
+                KeyVersion = req.KeyVersion,
                 EncryptedPsk = env.EncryptedPsk,
                 CreatedAt = DateTime.UtcNow
             });
@@ -116,4 +159,42 @@ public class GroupsController : ControllerBase
 
         return Ok(members);
     }
+
+    /// <summary>
+    /// Adds a user to a group using their device token.
+    /// </summary>
+    [HttpPost("{groupId}/members")]
+    public async Task<IActionResult> AddMember(
+        Guid groupId,
+        [FromBody] AddMemberRequest req,
+        [FromHeader(Name = "Authorization")] string? authHeader)
+    {
+        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrEmpty(token)) return Unauthorized();
+
+        var requestingUser = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == token);
+        if (requestingUser == null) return Unauthorized();
+
+        var group = await _db.Groups.FirstOrDefaultAsync(g => g.Id == groupId);
+        var targetUser = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == req.DeviceToken);
+
+        if (group == null || targetUser == null)
+            return NotFound("Group or target user not found.");
+
+        var isAlreadyMember = await _db.GroupMembers.AnyAsync(gm => gm.GroupId == groupId && gm.UserId == targetUser.Id);
+        if (!isAlreadyMember)
+        {
+            _db.GroupMembers.Add(new GroupMember
+            {
+                Id = Guid.NewGuid(),
+                GroupId = groupId,
+                UserId = targetUser.Id
+            });
+            await _db.SaveChangesAsync();
+        }
+
+        return Ok(new { success = true });
+    }
+
+    public record AddMemberRequest(string DeviceToken);
 }
