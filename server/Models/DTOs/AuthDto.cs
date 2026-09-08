@@ -1,5 +1,4 @@
 namespace LocationServer.Models.DTOs;
 
-public record RegisterKeyRequest(string SigningPublicKey);
-
-public record CreateUserRequest(string Name);
+public sealed record RegisterKeyRequest(string SigningPublicKey);
+public sealed record CreateUserRequest(string Name);

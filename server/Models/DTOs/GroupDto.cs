@@ -1,19 +1,21 @@
 namespace LocationServer.Models.DTOs;
 
-public record CreateGroupRequest(string Name);
+public sealed record CreateGroupRequest(string Name);
+public sealed record AssignUserGroupRequest(Guid GroupId, int UserId);
+public sealed record AddMemberRequest(string DeviceToken);
 
-public record GroupMemberKeyEnvelope(
+public sealed record GroupMemberKeyEnvelope(
     int UserId,
     string EncryptedPsk
 );
 
-public record PostGroupKeysRequest(
+public sealed record PostGroupKeysRequest(
     Guid GroupId,
     int KeyVersion,
     List<GroupMemberKeyEnvelope> Envelopes
 );
 
-public record GroupKeyResponseDto(
+public sealed record GroupKeyResponseDto(
     Guid GroupId,
     int KeyVersion,
     string EncryptedPsk,

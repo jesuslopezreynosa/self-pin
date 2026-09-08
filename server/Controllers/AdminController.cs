@@ -1,5 +1,5 @@
-using LocationServer.Models.DTOs;
 using LocationServer.Models;
+using LocationServer.Models.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,7 +7,7 @@ namespace LocationServer.Controllers;
 
 [ApiController]
 [Route("admin")]
-public class AdminController : ControllerBase
+public sealed class AdminController : ControllerBase
 {
     private readonly AppDbContext _db;
 
@@ -36,11 +36,14 @@ public class AdminController : ControllerBase
     [HttpGet("users")]
     public async Task<IActionResult> GetUsers()
     {
-        var users = await _db.Users.ToListAsync();
+        var users = await _db.Users
+            .AsNoTracking()
+            .ToListAsync();
+
         return Ok(users);
     }
 
-    // --- Group Management & Automated Key Rotation Triggers ---
+    // --- Group Management ---
 
     [HttpPost("groups")]
     public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest req)
@@ -62,6 +65,7 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> GetGroups()
     {
         var groups = await _db.Groups
+            .AsNoTracking()
             .Select(g => new
             {
                 g.Id,
@@ -88,7 +92,9 @@ public class AdminController : ControllerBase
             .Include(g => g.Members)
             .FirstOrDefaultAsync(g => g.Id == req.GroupId);
 
-        var userExists = await _db.Users.AnyAsync(u => u.Id == req.UserId);
+        var userExists = await _db.Users
+            .AsNoTracking()
+            .AnyAsync(u => u.Id == req.UserId);
 
         if (group == null || !userExists)
             return NotFound(new { error = "Group or User not found." });
@@ -97,7 +103,6 @@ public class AdminController : ControllerBase
 
         if (existingMembership == null)
         {
-            // Add new member
             _db.GroupMembers.Add(new GroupMember
             {
                 Id = Guid.NewGuid(),
@@ -105,9 +110,7 @@ public class AdminController : ControllerBase
                 UserId = req.UserId
             });
 
-            // Trigger key rotation flag across all active group members
             TriggerGroupKeyRotation(group);
-
             await _db.SaveChangesAsync();
         }
 
@@ -128,34 +131,16 @@ public class AdminController : ControllerBase
 
         if (membership != null)
         {
-            // Remove user from group
             _db.GroupMembers.Remove(membership);
-
-            // Trigger key rotation flag for all remaining members so evicted user loses access
             TriggerGroupKeyRotation(group, evictedUserId: req.UserId);
-
             await _db.SaveChangesAsync();
         }
 
         return Ok(new { success = true, currentKeyVersion = group.CurrentKeyVersion });
     }
 
-    /// <summary>
-    /// Helper to increment key version and mark members for background rotation.
-    /// </summary>
     private static void TriggerGroupKeyRotation(Group group, int? evictedUserId = null)
     {
         group.CurrentKeyVersion += 1;
-
-        foreach (var member in group.Members)
-        {
-            if (evictedUserId.HasValue && member.UserId == evictedUserId.Value)
-                continue;
-        }
     }
 }
-
-// Request Contracts
-public record CreateUserRequest(string Name);
-public record CreateGroupRequest(string Name);
-public record AssignUserGroupRequest(Guid GroupId, int UserId);

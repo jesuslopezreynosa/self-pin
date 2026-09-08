@@ -1,6 +1,6 @@
 namespace LocationServer.Models;
 
-public class GroupMember
+public sealed class GroupMember
 {
     public Guid Id { get; set; }
     public Guid GroupId { get; set; }

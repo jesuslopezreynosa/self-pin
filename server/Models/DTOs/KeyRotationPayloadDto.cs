@@ -1,6 +1,6 @@
 namespace LocationServer.Models.DTOs;
 
-public record KeyRotationPayloadDto(
+public sealed record KeyRotationPayloadDto(
     Guid GroupId,
     int NewKeyVersion,
     string EncryptedNewKey,
