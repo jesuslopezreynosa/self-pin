@@ -19,12 +19,13 @@ public class LocationController : ControllerBase
     [HttpPost("update")]
     public async Task<IActionResult> UpdateLocation(
         [FromBody] EncryptedLocationUpdateRequest req,
-        [FromHeader(Name = "X-Device-Token")] string? deviceToken)
+        [FromHeader(Name = "Authorization")] string? authHeader)
     {
-        if (string.IsNullOrEmpty(deviceToken))
+        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrEmpty(token))
             return Unauthorized();
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == token);
         if (user == null)
             return Unauthorized();
 
@@ -45,13 +46,14 @@ public class LocationController : ControllerBase
     }
 
     [HttpGet("feed")]
-    public async Task<IActionResult> GetFeed([FromHeader(Name = "X-Device-Token")] string? deviceToken)
+    public async Task<IActionResult> GetFeed([FromHeader(Name = "Authorization")] string? authHeader)
     {
         // 1. Explicitly check for device token header
-        if (string.IsNullOrEmpty(deviceToken))
-            return Unauthorized(new { error = "Device token header required." });
+        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrEmpty(token))
+            return Unauthorized(new { error = "Authorization token header required." });
 
-        var requestingUser = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == deviceToken);
+        var requestingUser = await _db.Users.FirstOrDefaultAsync(u => u.DeviceToken == token);
         if (requestingUser == null)
             return Unauthorized(new { error = "Invalid device token." });
 
@@ -92,9 +94,12 @@ public class LocationController : ControllerBase
     }
 
     [HttpGet("map-config")]
-    public async Task<IActionResult> GetMapConfig([FromHeader(Name = "X-Device-Token")] string deviceToken, [FromServices] IConfiguration configuration)
+    public async Task<IActionResult> GetMapConfig(
+        [FromHeader(Name = "Authorization")] string? authHeader,
+        [FromServices] IConfiguration configuration)
     {
-        if (string.IsNullOrWhiteSpace(deviceToken))
+        var token = authHeader?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrWhiteSpace(token))
         {
             return Unauthorized(new { message = "Device token is required." });
         }
@@ -102,7 +107,7 @@ public class LocationController : ControllerBase
         // Authenticate: Ensure the device token belongs to a registered user
         var userExists = await _db.Users
             .AsNoTracking()
-            .AnyAsync(u => u.DeviceToken == deviceToken);
+            .AnyAsync(u => u.DeviceToken == token);
 
         if (!userExists)
         {

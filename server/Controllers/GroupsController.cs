@@ -107,7 +107,7 @@ public class GroupsController : ControllerBase
         if (user == null) return Unauthorized();
 
         var isMember = await _db.GroupMembers.AnyAsync(gm => gm.GroupId == req.GroupId && gm.UserId == user.Id);
-        if (!isMember) return Forbid();
+        if (!isMember) return StatusCode(StatusCodes.Status403Forbidden);
 
         var group = await _db.Groups.FirstOrDefaultAsync(g => g.Id == req.GroupId);
         if (group == null) return NotFound("Group not found.");
@@ -145,7 +145,7 @@ public class GroupsController : ControllerBase
         if (user == null) return Unauthorized();
 
         var isMember = await _db.GroupMembers.AnyAsync(gm => gm.GroupId == groupId && gm.UserId == user.Id);
-        if (!isMember) return Forbid();
+        if (!isMember) return StatusCode(StatusCodes.Status403Forbidden);
 
         var members = await _db.GroupMembers
             .Where(gm => gm.GroupId == groupId)

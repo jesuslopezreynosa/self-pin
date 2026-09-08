@@ -6,7 +6,6 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Xunit;
 
 namespace SelfPin.Api.Tests;
 
@@ -214,7 +213,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 7. Active member (User 1) posts the location update encrypted with Key V2
         var locUpdateReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/location/update")
         {
-            Headers = { { "X-Device-Token", tokens[0] } },
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", tokens[0]) },
             Content = JsonContent.Create(new
             {
                 encryptedPayload = payloadBase64,
@@ -228,7 +227,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 8. Verify an active member (User 2) CAN see User 1's location update in feed
         var user2FeedReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/feed")
         {
-            Headers = { { "X-Device-Token", tokens[1] } }
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", tokens[1]) }
         };
         var user2FeedRes = await _client.SendAsync(user2FeedReq);
         user2FeedRes.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -240,7 +239,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         {
             var removedFeedReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/feed")
             {
-                Headers = { { "X-Device-Token", removedToken } }
+                Headers = { Authorization = new AuthenticationHeaderValue("Bearer", removedToken) }
             };
             var removedFeedRes = await _client.SendAsync(removedFeedReq);
             removedFeedRes.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -348,7 +347,6 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // Test 2: Request with FALSE / INVALID token
         var falseTokenReq = new HttpRequestMessage(httpMethod, endpoint);
         falseTokenReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "invalid_fake_device_token_99999");
-        falseTokenReq.Headers.TryAddWithoutValidation("X-Device-Token", "invalid_fake_device_token_99999");
 
         if (httpMethod == HttpMethod.Post)
         {
@@ -377,7 +375,6 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 2. Alice creates "Alice's Group" (Eve is NOT added)
         var groupReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/groups");
         groupReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", aliceToken);
-        groupReq.Headers.TryAddWithoutValidation("X-Device-Token", aliceToken);
         groupReq.Content = JsonContent.Create(new { name = "Alice's Group" });
 
         var groupRes = await _client.SendAsync(groupReq);
@@ -386,7 +383,6 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 3. Eve publishes a location update
         var eveLocReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/location/update");
         eveLocReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", eveToken);
-        eveLocReq.Headers.TryAddWithoutValidation("X-Device-Token", eveToken);
         eveLocReq.Content = JsonContent.Create(new
         {
             encryptedPayload = "eves_unauthorized_location_payload",
@@ -399,7 +395,6 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         // 4. Alice fetches her location feed
         var aliceFeedReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/feed");
         aliceFeedReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", aliceToken);
-        aliceFeedReq.Headers.TryAddWithoutValidation("X-Device-Token", aliceToken);
         var aliceFeedRes = await _client.SendAsync(aliceFeedReq);
         aliceFeedRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
