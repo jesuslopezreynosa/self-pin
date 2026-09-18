@@ -12,6 +12,7 @@ public class AppDbContext : DbContext
     public DbSet<GroupMember> GroupMembers => Set<GroupMember>();
     public DbSet<GroupKey> GroupKeys => Set<GroupKey>();
     public DbSet<LocationEntry> Locations => Set<LocationEntry>();
+    public DbSet<AdminPasskey> AdminPasskeys => Set<AdminPasskey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +22,17 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<User>()
             .HasIndex(u => u.DeviceToken)
             .IsUnique();
+
+        // Unique index on WebAuthn Credential ID
+        modelBuilder.Entity<AdminPasskey>()
+            .HasIndex(p => p.CredentialId)
+            .IsUnique();
+
+        modelBuilder.Entity<AdminPasskey>()
+            .HasOne(p => p.User)
+            .WithMany(u => u.Passkeys)
+            .HasForeignKey(p => p.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         // Prevent duplicate membership and speed up group member joins
         modelBuilder.Entity<GroupMember>()

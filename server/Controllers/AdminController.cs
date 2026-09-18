@@ -1,11 +1,13 @@
 using LocationServer.Models;
 using LocationServer.Models.DTOs;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace LocationServer.Controllers;
 
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("admin")]
 public sealed class AdminController : ControllerBase
 {

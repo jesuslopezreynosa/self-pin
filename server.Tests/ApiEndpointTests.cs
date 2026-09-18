@@ -9,13 +9,16 @@ using System.Text.Json;
 
 namespace SelfPin.Api.Tests;
 
-public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public class ApiEndpointTests : IClassFixture<CustomWebApplicationFactory>
 {
+    private readonly CustomWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
-    public ApiEndpointTests(WebApplicationFactory<Program> factory)
+    public ApiEndpointTests(CustomWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
+        _client.DefaultRequestHeaders.Add("X-Admin-Passkey", CustomWebApplicationFactory.AdminPasskey);
     }
 
     [Fact]
@@ -182,10 +185,10 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         byte[] originalGroupPsk = RandomNumberGenerator.GetBytes(32);
 
         // 5. Remove User 4 and User 5 from the group
-        var removeUser4Res = await _client.PostAsJsonAsync("/admin/groups/remove", new { groupId, userId = userIds[3] });
+        var removeUser4Res = await _client.PostAsJsonAsync("/admin/groups/remove", new { groupId = Guid.Parse(groupId), userId = userIds[3] });
         removeUser4Res.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var removeUser5Res = await _client.PostAsJsonAsync("/admin/groups/remove", new { groupId, userId = userIds[4] });
+        var removeUser5Res = await _client.PostAsJsonAsync("/admin/groups/remove", new { groupId = Guid.Parse(groupId), userId = userIds[4] });
         removeUser5Res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 6. Key Rotation: Active Members (Users 1, 2, 3) generate a NEW 32-byte Group Key (V2)
@@ -282,6 +285,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Endpoints_WithoutValidToken_ReturnUnauthorized(string method, string endpoint)
     {
         var httpMethod = new HttpMethod(method);
+        var unauthenticatedClient = _factory.CreateClient();
 
         // Build payload models matching controller DTO expectations
         HttpContent CreateValidPayload()
@@ -341,7 +345,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         {
             noTokenReq.Content = CreateValidPayload();
         }
-        var noTokenRes = await _client.SendAsync(noTokenReq);
+        var noTokenRes = await unauthenticatedClient.SendAsync(noTokenReq);
         noTokenRes.StatusCode.Should().Be(HttpStatusCode.Unauthorized, $"missing token on {method} {endpoint} should return 401");
 
         // Test 2: Request with FALSE / INVALID token
@@ -352,7 +356,7 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         {
             falseTokenReq.Content = CreateValidPayload();
         }
-        var falseTokenRes = await _client.SendAsync(falseTokenReq);
+        var falseTokenRes = await unauthenticatedClient.SendAsync(falseTokenReq);
         falseTokenRes.StatusCode.Should().Be(HttpStatusCode.Unauthorized, $"false token on {method} {endpoint} should return 401");
     }
 
@@ -364,7 +368,6 @@ public class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         aliceRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var aliceJson = await aliceRes.Content.ReadFromJsonAsync<JsonElement>();
         var aliceToken = aliceJson.GetProperty("deviceToken").GetString()!;
-        var aliceUserId = aliceJson.GetProperty("id").GetInt32();
 
         var eveRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Eve" });
         eveRes.StatusCode.Should().Be(HttpStatusCode.Created);

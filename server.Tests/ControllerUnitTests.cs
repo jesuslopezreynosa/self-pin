@@ -1,4 +1,6 @@
 using FluentAssertions;
+using LocationServer.Models;
+using LocationServer.Models.DTOs;
 using Microsoft.AspNetCore.Mvc.Testing;
 using System.Net;
 using System.Net.Http.Headers;
@@ -11,21 +13,64 @@ namespace SelfPin.Api.Tests;
 [Collection("ApiTestCollection")]
 public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
 {
+    private readonly CustomWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
     public ControllerUnitTests(CustomWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
+    private Task<HttpClient> GetAuthenticatedAdminClientAsync()
+    {
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Admin-Passkey", CustomWebApplicationFactory.AdminPasskey);
+        return Task.FromResult(client);
+    }
+
     // ==========================================
-    // 1. ADMIN CONTROLLER TESTS
+    // 1. ADMIN PASSKEY AUTHENTICATION TESTS
+    // ==========================================
+
+    [Fact]
+    public async Task Admin_WithValidPasskey_CanAccessProtectedEndpoints()
+    {
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var res = await adminClient.GetAsync("/admin/users");
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Admin_WithInvalidPasskey_ReturnsUnauthorized()
+    {
+        var invalidClient = _factory.CreateClient();
+        invalidClient.DefaultRequestHeaders.Add("X-Admin-Passkey", "wrong-invalid-passkey");
+
+        var res = await invalidClient.GetAsync("/admin/users");
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Admin_WithNoPasskeyProvided_ReturnsUnauthorized()
+    {
+        var unauthenticatedClient = _factory.CreateClient();
+
+        var res = await unauthenticatedClient.GetAsync("/admin/users");
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // ==========================================
+    // 2. ADMIN CONTROLLER TESTS
     // ==========================================
 
     [Fact]
     public async Task Admin_CreateUser_CreatesUserWithGeneratedDeviceToken()
     {
-        var res = await _client.PostAsJsonAsync("/admin/users", new { name = "Alice AdminTest" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var res = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Alice AdminTest" });
         res.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var json = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -37,10 +82,15 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Admin_GetUsers_ReturnsAllUsers()
     {
-        await _client.PostAsJsonAsync("/admin/users", new { name = "User1" });
-        await _client.PostAsJsonAsync("/admin/users", new { name = "User2" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
 
-        var res = await _client.GetAsync("/admin/users");
+        var u1Res = await adminClient.PostAsJsonAsync("/admin/users", new { name = "User1" });
+        u1Res.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var u2Res = await adminClient.PostAsJsonAsync("/admin/users", new { name = "User2" });
+        u2Res.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var res = await adminClient.GetAsync("/admin/users");
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var users = await res.Content.ReadFromJsonAsync<List<JsonElement>>();
@@ -51,7 +101,9 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Admin_CreateGroup_CreatesGroupWithKeyVersion1()
     {
-        var res = await _client.PostAsJsonAsync("/admin/groups", new { name = "Admin Group" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var res = await adminClient.PostAsJsonAsync("/admin/groups", new { name = "Admin Group" });
         res.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var json = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -62,12 +114,15 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Admin_AssignUserToGroup_NonExistentUserOrGroup_ReturnsNotFound()
     {
-        var validUserRes = await _client.PostAsJsonAsync("/admin/users", new { name = "TestUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var validUserRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "TestUser" });
+        validUserRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var validUser = await validUserRes.Content.ReadFromJsonAsync<JsonElement>();
         int userId = validUser.GetProperty("id").GetInt32();
 
         // Case A: Group doesn't exist
-        var res1 = await _client.PostAsJsonAsync("/admin/groups/assign", new
+        var res1 = await adminClient.PostAsJsonAsync("/admin/groups/assign", new
         {
             groupId = Guid.NewGuid(),
             userId = userId
@@ -75,11 +130,12 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
         res1.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         // Case B: User doesn't exist
-        var groupRes = await _client.PostAsJsonAsync("/admin/groups", new { name = "Test Group" });
+        var groupRes = await adminClient.PostAsJsonAsync("/admin/groups", new { name = "Test Group" });
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var group = await groupRes.Content.ReadFromJsonAsync<JsonElement>();
         Guid groupId = Guid.Parse(group.GetProperty("id").GetString()!);
 
-        var res2 = await _client.PostAsJsonAsync("/admin/groups/assign", new
+        var res2 = await adminClient.PostAsJsonAsync("/admin/groups/assign", new
         {
             groupId = groupId,
             userId = 999999
@@ -90,29 +146,33 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Admin_AssignAndRemoveUser_TriggersKeyRotationCorrectly()
     {
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
         // Setup User and Group
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "RotationUser" });
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "RotationUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var user = await userRes.Content.ReadFromJsonAsync<JsonElement>();
         int userId = user.GetProperty("id").GetInt32();
 
-        var groupRes = await _client.PostAsJsonAsync("/admin/groups", new { name = "Rotation Group" });
+        var groupRes = await adminClient.PostAsJsonAsync("/admin/groups", new { name = "Rotation Group" });
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var group = await groupRes.Content.ReadFromJsonAsync<JsonElement>();
         Guid groupId = Guid.Parse(group.GetProperty("id").GetString()!);
 
         // 1. First Assignment -> Adds member & increments key version from 1 to 2
-        var assignRes1 = await _client.PostAsJsonAsync("/admin/groups/assign", new { groupId, userId });
+        var assignRes1 = await adminClient.PostAsJsonAsync("/admin/groups/assign", new { groupId, userId });
         assignRes1.StatusCode.Should().Be(HttpStatusCode.OK);
         var assignJson1 = await assignRes1.Content.ReadFromJsonAsync<JsonElement>();
         assignJson1.GetProperty("currentKeyVersion").GetInt32().Should().Be(2);
 
         // 2. Duplicate Assignment -> Idempotent, key version stays 2
-        var assignRes2 = await _client.PostAsJsonAsync("/admin/groups/assign", new { groupId, userId });
+        var assignRes2 = await adminClient.PostAsJsonAsync("/admin/groups/assign", new { groupId, userId });
         assignRes2.StatusCode.Should().Be(HttpStatusCode.OK);
         var assignJson2 = await assignRes2.Content.ReadFromJsonAsync<JsonElement>();
         assignJson2.GetProperty("currentKeyVersion").GetInt32().Should().Be(2);
 
         // 3. Remove User -> Removes member & increments key version to 3
-        var removeRes = await _client.PostAsJsonAsync("/admin/groups/remove", new { groupId, userId });
+        var removeRes = await adminClient.PostAsJsonAsync("/admin/groups/remove", new { groupId, userId });
         removeRes.StatusCode.Should().Be(HttpStatusCode.OK);
         var removeJson = await removeRes.Content.ReadFromJsonAsync<JsonElement>();
         removeJson.GetProperty("currentKeyVersion").GetInt32().Should().Be(3);
@@ -121,7 +181,9 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Admin_RemoveUserFromGroup_NonExistentGroup_ReturnsNotFound()
     {
-        var res = await _client.PostAsJsonAsync("/admin/groups/remove", new
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var res = await adminClient.PostAsJsonAsync("/admin/groups/remove", new
         {
             groupId = Guid.NewGuid(),
             userId = 1
@@ -130,7 +192,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     // ==========================================
-    // 2. AUTH CONTROLLER TESTS
+    // 3. AUTH CONTROLLER TESTS
     // ==========================================
 
     [Fact]
@@ -163,7 +225,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Auth_RegisterKey_ValidToken_UpdatesUserPublicKey()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "AuthUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "AuthUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var user = await userRes.Content.ReadFromJsonAsync<JsonElement>();
         var token = user.GetProperty("deviceToken").GetString()!;
 
@@ -178,13 +243,16 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     // ==========================================
-    // 3. GROUPS CONTROLLER TESTS
+    // 4. GROUPS CONTROLLER TESTS
     // ==========================================
 
     [Fact]
     public async Task Groups_CreateGroup_ValidUser_CreatesGroupAndAddsCreatorAsMember()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "GroupCreator" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "GroupCreator" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var user = await userRes.Content.ReadFromJsonAsync<JsonElement>();
         var token = user.GetProperty("deviceToken").GetString()!;
 
@@ -205,7 +273,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Groups_GetGroupKeys_UserInNoGroups_ReturnsEmptyList()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "LonelyUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "LonelyUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var token = (await userRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/groups/keys")
@@ -223,8 +294,11 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Groups_GetGroupKeys_MultipleVersionsExist_DeduplicatesToLatestKeyVersionPerGroup()
     {
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
         // 1. Create User & Group
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "KeyUser" });
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "KeyUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var user = await userRes.Content.ReadFromJsonAsync<JsonElement>();
         var token = user.GetProperty("deviceToken").GetString()!;
         var userId = user.GetProperty("id").GetInt32();
@@ -235,6 +309,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Content = JsonContent.Create(new { name = "Key Dedup Group" })
         };
         var groupRes = await _client.SendAsync(groupReq);
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var groupId = Guid.Parse((await groupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!);
 
         // 2. Post Key V1
@@ -248,7 +323,8 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
                 envelopes = new[] { new { userId, encryptedPsk = "v1_key" } }
             })
         };
-        await _client.SendAsync(postKeyV1);
+        var postKeyV1Res = await _client.SendAsync(postKeyV1);
+        postKeyV1Res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 3. Post Key V2
         var postKeyV2 = new HttpRequestMessage(HttpMethod.Post, "/api/v1/groups/keys")
@@ -261,7 +337,8 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
                 envelopes = new[] { new { userId, encryptedPsk = "v2_key" } }
             })
         };
-        await _client.SendAsync(postKeyV2);
+        var postKeyV2Res = await _client.SendAsync(postKeyV2);
+        postKeyV2Res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 4. Fetch keys and verify only V2 is returned
         var getKeysReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/groups/keys")
@@ -281,10 +358,14 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Groups_PostGroupKeys_NonMember_ReturnsForbidden()
     {
-        var aliceRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var aliceRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        aliceRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var aliceToken = (await aliceRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
-        var eveRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Eve" });
+        var eveRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Eve" });
+        eveRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var eveToken = (await eveRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         // Alice creates group
@@ -294,6 +375,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Content = JsonContent.Create(new { name = "Alice Private Group" })
         };
         var groupRes = await _client.SendAsync(groupReq);
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var groupId = Guid.Parse((await groupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!);
 
         // Eve (Non-member) tries to post key envelope
@@ -315,10 +397,14 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Groups_GetMemberPublicKeys_NonMember_ReturnsForbidden()
     {
-        var aliceRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var aliceRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        aliceRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var aliceToken = (await aliceRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
-        var eveRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Eve" });
+        var eveRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Eve" });
+        eveRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var eveToken = (await eveRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         var groupReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/groups")
@@ -327,6 +413,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Content = JsonContent.Create(new { name = "Alice Group" })
         };
         var groupRes = await _client.SendAsync(groupReq);
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var groupId = (await groupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var getKeysReq = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/groups/{groupId}/member-keys")
@@ -341,7 +428,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Groups_AddMember_TargetUserOrGroupNotFound_ReturnsNotFound()
     {
-        var aliceRes = await _client.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var aliceRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "Alice" });
+        aliceRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var aliceToken = (await aliceRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         // 1. Invalid Group GUID
@@ -359,6 +449,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Content = JsonContent.Create(new { name = "Add Member Test" })
         };
         var groupRes = await _client.SendAsync(groupReq);
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var groupId = (await groupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var req2 = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/groups/{groupId}/members")
@@ -370,7 +461,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     // ==========================================
-    // 4. LOCATION CONTROLLER TESTS
+    // 5. LOCATION CONTROLLER TESTS
     // ==========================================
 
     [Fact]
@@ -395,7 +486,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Location_Update_NullTimestamp_DefaultsToUtcNowAndUpdatesUserLastUpdated()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "LocUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "LocUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var token = (await userRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         var updateReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/location/update")
@@ -405,7 +499,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             {
                 encryptedPayload = "encrypted_location_string",
                 keyVersion = 1,
-                timestamp = (string?)null // Null timestamp edge case
+                timestamp = (string?)null
             })
         };
 
@@ -416,7 +510,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Location_GetFeed_UserInNoGroups_ReturnsEmptyList()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "NoGroupUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "NoGroupUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var token = (await userRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         var feedReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/feed")
@@ -434,11 +531,15 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Location_GetFeed_ReturnsLatestLocationEntryPerSharedMemberOnly()
     {
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
         // 1. Create User 1 & User 2
-        var user1Res = await _client.PostAsJsonAsync("/admin/users", new { name = "User1" });
+        var user1Res = await adminClient.PostAsJsonAsync("/admin/users", new { name = "User1" });
+        user1Res.StatusCode.Should().Be(HttpStatusCode.Created);
         var token1 = (await user1Res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
-        var user2Res = await _client.PostAsJsonAsync("/admin/users", new { name = "User2" });
+        var user2Res = await adminClient.PostAsJsonAsync("/admin/users", new { name = "User2" });
+        user2Res.StatusCode.Should().Be(HttpStatusCode.Created);
         var token2 = (await user2Res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         // 2. User 1 creates group and adds User 2
@@ -448,6 +549,7 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Content = JsonContent.Create(new { name = "Feed Group" })
         };
         var groupRes = await _client.SendAsync(groupReq);
+        groupRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var groupId = (await groupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var addMemberReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/groups/{groupId}/members")
@@ -455,7 +557,8 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token1) },
             Content = JsonContent.Create(new { deviceToken = token2 })
         };
-        await _client.SendAsync(addMemberReq);
+        var addMemberRes = await _client.SendAsync(addMemberReq);
+        addMemberRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 3. User 2 Posts Older Location Entry
         var locReq1 = new HttpRequestMessage(HttpMethod.Post, "/api/v1/location/update")
@@ -468,7 +571,8 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
                 timestamp = DateTime.UtcNow.AddHours(-1).ToString("o")
             })
         };
-        await _client.SendAsync(locReq1);
+        var locRes1 = await _client.SendAsync(locReq1);
+        locRes1.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 4. User 2 Posts Newer Location Entry
         var locReq2 = new HttpRequestMessage(HttpMethod.Post, "/api/v1/location/update")
@@ -481,7 +585,8 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
                 timestamp = DateTime.UtcNow.ToString("o")
             })
         };
-        await _client.SendAsync(locReq2);
+        var locRes2 = await _client.SendAsync(locReq2);
+        locRes2.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 5. User 1 Fetches Feed
         var feedReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/feed")
@@ -520,7 +625,10 @@ public class ControllerUnitTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Location_GetMapConfig_RegisteredUser_ReturnsCartoConfig()
     {
-        var userRes = await _client.PostAsJsonAsync("/admin/users", new { name = "MapUser" });
+        var adminClient = await GetAuthenticatedAdminClientAsync();
+
+        var userRes = await adminClient.PostAsJsonAsync("/admin/users", new { name = "MapUser" });
+        userRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var token = (await userRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("deviceToken").GetString()!;
 
         var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/location/map-config")
