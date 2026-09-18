@@ -1,6 +1,7 @@
+using Fido2NetLib;
 using LocationServer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,7 +9,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=location.db"));
 
-// Register Controller support
 builder.Services.AddControllers();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -29,25 +29,40 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
 });
 
+// Memory Cache & Session for FIDO2 challenge persistence
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.Cookie.Name = "WebAuthnSession";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+});
+
+// Direct IFido2 registration (bypasses AddFido2 extension method binding issues)
+builder.Services.AddSingleton<IFido2>(sp => new Fido2(new Fido2Configuration
+{
+    ServerDomain = builder.Configuration["Fido2:ServerDomain"] ?? "localhost",
+    ServerName = "SelfPin Admin",
+    Origins = new HashSet<string> { builder.Configuration["Fido2:Origin"] ?? "https://localhost:7078" }
+}));
+
 var app = builder.Build();
 
 app.UseCors();
+app.UseSession();
+app.UseAuthentication();
+app.UseAuthorization();
 
-// Map Controller Endpoints automatically
 app.MapControllers();
 
-// Automatically create SQLite DB schema on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    // Wipe and recreate the database ONLY during local development
     if (app.Environment.IsDevelopment())
     {
-        db.Database.EnsureDeleted(); // Wipes existing database file/schema
+        db.Database.EnsureDeleted();
     }
-
-    db.Database.EnsureCreated(); // Creates clean schema
+    db.Database.EnsureCreated();
 }
 
 app.Run();
